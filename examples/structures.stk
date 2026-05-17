@@ -1,0 +1,30 @@
+#!/usr/bin/env stryke
+# examples/structures.stk — lists, sets, hashes, sorted sets.
+# Run:   REDIS_URL=redis://localhost s examples/structures.stk
+
+use Redis
+
+# Lists.
+Redis::lpush "events", ["a", "b", "c", "d"]
+p "len:    " . Redis::llen("events")
+p "lrange: " . join(",", Redis::lrange("events", 0, -1))
+p "lpop:   " . Redis::lpop("events")
+
+# Hash.
+Redis::hmset "user:42", { name => "alice", age => 30, role => "admin" }
+my $u = Redis::hgetall "user:42"
+p "user:42 name=$u->{name} age=$u->{age} role=$u->{role}"
+
+# Set.
+Redis::sadd "tags", ["rust", "stryke", "data"]
+p "tags:   " . join(",", sort(Redis::smembers("tags")))
+p "tags#:  " . Redis::scard("tags")
+
+# Sorted set.
+Redis::zadd "leaderboard", { alice => 100, bob => 200, charlie => 150 }
+my @lb = Redis::zrange "leaderboard", 0, -1, withscores => 1, rev => 1
+for my $e (@lb) {
+    p "  $e->{member}: $e->{score}"
+}
+
+Redis::del ["events", "user:42", "tags", "leaderboard"]

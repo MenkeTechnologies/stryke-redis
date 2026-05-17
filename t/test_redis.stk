@@ -1,0 +1,161 @@
+# t/test_redis.stk — round-trip against a live Redis.
+#
+# Skips when:
+#   * helper isn't built
+#   * neither $REDIS_URL is set NOR 127.0.0.1:6379 is reachable
+#
+# Uses keys prefixed with `stryke:test:$$:` and cleans them up at exit.
+
+require "./lib/Redis.stk"
+
+my $have_helper = eval { Redis::helper_path(); 1 }
+unless ($have_helper) {
+    p "1..0 # SKIP helper not built — run `cargo build --release` first"
+    exit 0
+}
+
+my %conn
+$conn{url} = $ENV{REDIS_URL} if defined $ENV{REDIS_URL}
+unless (Redis::ping(%conn)) {
+    p "1..0 # SKIP redis unreachable"
+    exit 0
+}
+
+my $pfx = "stryke:test:$$"
+p "1..12"
+my $i = 0
+
+# 1. set / get
+eval {
+    Redis::set("$pfx:foo", "bar", %conn)
+}
+my $v
+eval { $v = Redis::get("$pfx:foo", %conn) }
+$i++
+p $@ ? "not ok $i - set/get: $@" :
+       ($v eq "bar" ? "ok $i - set/get" : "not ok $i - set/get got $v")
+
+# 2. incr
+my $n
+eval {
+    Redis::set("$pfx:n", "10", %conn)
+    $n = Redis::incr("$pfx:n", by => 5, %conn)
+}
+$i++
+p $@ ? "not ok $i - incr: $@" : ($n == 15 ? "ok $i - incr" : "not ok $i - incr=$n")
+
+# 3. mset / mget
+eval {
+    Redis::mset({ "$pfx:a" => "1", "$pfx:b" => "2", "$pfx:c" => "3" }, %conn)
+}
+my @mg
+eval { @mg = Redis::mget(["$pfx:a", "$pfx:b", "$pfx:c", "$pfx:nope"], %conn) }
+$i++
+p $@ ? "not ok $i - mset/mget: $@" :
+       (len(@mg) == 4 && $mg[0] eq "1" && $mg[3] eq ""
+            ? "ok $i - mset/mget"
+            : "not ok $i - mset/mget got " . to_json(\@mg))
+
+# 4. expire/ttl
+eval {
+    Redis::set("$pfx:exp", "soon", %conn)
+    Redis::expire("$pfx:exp", 100, %conn)
+}
+my $ttl
+eval { $ttl = Redis::ttl("$pfx:exp", %conn) }
+$i++
+p $@ ? "not ok $i - expire/ttl: $@" :
+       ($ttl > 0 && $ttl <= 100 ? "ok $i - expire/ttl ($ttl)" : "not ok $i - ttl=$ttl")
+
+# 5. lists
+my $llen
+my @lr
+eval {
+    Redis::lpush("$pfx:list", ["a", "b", "c"], %conn)
+    $llen = Redis::llen("$pfx:list", %conn)
+    @lr = Redis::lrange("$pfx:list", 0, -1, %conn)
+}
+$i++
+p $@ ? "not ok $i - list: $@" :
+       ($llen == 3 && $lr[0] eq "c" && $lr[2] eq "a"
+            ? "ok $i - list"
+            : "not ok $i - list wrong: llen=$llen, lr=" . to_json(\@lr))
+
+# 6. sets
+my $sn
+my @sm
+eval {
+    Redis::sadd("$pfx:set", ["a", "b", "c"], %conn)
+    $sn = Redis::scard("$pfx:set", %conn)
+    @sm = sort(Redis::smembers("$pfx:set", %conn))
+}
+$i++
+p $@ ? "not ok $i - set: $@" :
+       ($sn == 3 && $sm[0] eq "a" && $sm[2] eq "c"
+            ? "ok $i - set"
+            : "not ok $i - set wrong")
+
+# 7. hash
+my $h
+eval {
+    Redis::hmset("$pfx:h", { name => "alice", age => "30" }, %conn)
+    $h = Redis::hgetall("$pfx:h", %conn)
+}
+$i++
+p $@ ? "not ok $i - hash: $@" :
+       ($h->{name} eq "alice" && $h->{age} eq "30"
+            ? "ok $i - hash"
+            : "not ok $i - hash got " . to_json($h))
+
+# 8. zset
+my @zr
+my $zsc
+eval {
+    Redis::zadd("$pfx:z", { a => 1.0, b => 2.0, c => 3.0 }, %conn)
+    @zr = Redis::zrange("$pfx:z", 0, -1, withscores => 1, %conn)
+    $zsc = Redis::zscore("$pfx:z", "b", %conn)
+}
+$i++
+p $@ ? "not ok $i - zset: $@" :
+       (len(@zr) == 3 && $zr[0]->{member} eq "a" && $zsc == 2.0
+            ? "ok $i - zset"
+            : "not ok $i - zset wrong: " . to_json(\@zr) . " score=$zsc")
+
+# 9. exists / del
+my $ex
+my $delcount
+eval {
+    $ex = Redis::exists("$pfx:foo", %conn)
+    $delcount = Redis::del(["$pfx:foo", "$pfx:nope"], %conn)
+}
+$i++
+p $@ ? "not ok $i - exists/del: $@" :
+       ($ex == 1 && $delcount == 1
+            ? "ok $i - exists/del"
+            : "not ok $i - exists=$ex del=$delcount")
+
+# 10. publish (no subscriber; OK if count >= 0)
+my $pubcount
+eval { $pubcount = Redis::publish("$pfx:ch", "hello", %conn) }
+$i++
+p $@ ? "not ok $i - publish: $@" :
+       ($pubcount >= 0 ? "ok $i - publish (subscribers=$pubcount)" :
+        "not ok $i - publish wrong")
+
+# 11. type
+my $type
+eval { $type = Redis::type("$pfx:list", %conn) }
+$i++
+p $@ ? "not ok $i - type: $@" :
+       ($type eq "list" ? "ok $i - type" : "not ok $i - type=$type")
+
+# 12. scan finds our prefix
+my @keys
+eval { @keys = Redis::scan(match => "$pfx:*", count => 100, %conn) }
+$i++
+p $@ ? "not ok $i - scan: $@" :
+       (len(@keys) >= 4 ? "ok $i - scan (#{len(@keys)} keys)" :
+        "not ok $i - scan only found " . len(@keys) . " keys")
+
+# cleanup
+Redis::del(\@keys, %conn) if @keys

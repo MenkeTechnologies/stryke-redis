@@ -1,0 +1,5 @@
+/target
+/tmp
+
+# Track Cargo.lock for binary crates — overrides ~/.gitignore_global *.lock.
+!Cargo.lock

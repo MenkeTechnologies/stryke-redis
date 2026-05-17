@@ -1,0 +1,11 @@
+#!/usr/bin/env stryke
+# examples/publish.stk — emit a Pub/Sub message.
+# Run:   REDIS_URL=redis://localhost s examples/publish.stk my-channel 'hello'
+
+use Redis
+
+my ($ch, $msg) = @ARGV
+die "usage: publish.stk CHANNEL MESSAGE\n" unless defined $msg
+
+my $n = Redis::publish $ch, $msg
+p "delivered to $n subscriber(s)"

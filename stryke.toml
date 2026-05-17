@@ -1,0 +1,19 @@
+[package]
+name = "redis"
+version = "0.1.0"
+description = "Redis / Valkey client for stryke. KV, lists, sets, hashes, sorted-sets, pub/sub publish, scan, server admin. Single-shot per call."
+authors = ["MenkeTechnologies"]
+license = "MIT"
+repository = "https://github.com/MenkeTechnologies/stryke-redis"
+edition = "2026"
+
+[bin]
+redis = "bin/redis.stk"
+redis-build = "bin/redis-build.stk"
+
+[scripts]
+build = "cargo build --release"
+build-debug = "cargo build"
+clean = "cargo clean"
+test = "s test t/"
+install = "s pkg install -g ."

@@ -1,0 +1,18 @@
+#!/usr/bin/env stryke
+# examples/kv.stk — simple KV demo.
+# Run:   REDIS_URL=redis://localhost s examples/kv.stk
+
+use Redis
+
+Redis::set("greeting", "hello from stryke")
+p "stored: " . Redis::get("greeting")
+
+Redis::mset({ a => 1, b => 2, c => 3 })
+my @v = Redis::mget(["a", "b", "c"])
+p "mget: " . join(",", @v)
+
+p "incr: " . Redis::incr("counter")
+p "incr: " . Redis::incr("counter", by => 10)
+p "ttl(counter): " . Redis::ttl("counter") . " (no expiry → -1)"
+
+Redis::del(["greeting", "a", "b", "c", "counter"])

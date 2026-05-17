@@ -1,0 +1,32 @@
+[package]
+name = "stryke-redis-helper"
+version = "0.1.0"
+edition = "2021"
+description = "Redis / Valkey bridge binary for the stryke `redis` package."
+authors = ["MenkeTechnologies"]
+license = "MIT"
+repository = "https://github.com/MenkeTechnologies/stryke-redis"
+publish = false
+
+[[bin]]
+name = "stryke-redis-helper"
+path = "src/main.rs"
+
+[dependencies]
+redis = { version = "1", default-features = false, features = [
+    "acl", "streams", "geospatial", "script", "num-bigint", "tls-rustls",
+] }
+clap = { version = "4", default-features = false, features = [
+    "std", "derive", "help", "usage", "error-context", "env",
+] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+anyhow = "1"
+base64 = "0.22"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+panic = "abort"

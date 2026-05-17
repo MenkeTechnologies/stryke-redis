@@ -1,0 +1,125 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --all-targets --locked
+
+  test:
+    name: Test
+    runs-on: ${{ matrix.os }}
+    env:
+      RUST_BACKTRACE: 1
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked --no-fail-fast
+
+  helper-live-redis:
+    name: Helper end-to-end (redis:7)
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=20
+    env:
+      REDIS_URL: redis://127.0.0.1:6379/0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo build --release --locked
+
+      - name: ping + KV + list + hash + zset + scan
+        run: |
+          set -euo pipefail
+          H=./target/release/stryke-redis-helper
+          $H ping | jq -e '.pong == "PONG"'
+          $H set foo bar | jq -e '.ok == true'
+          $H get foo | jq -e '.value == "bar"'
+          $H mset a 1 b 2 c 3 | jq -e '.set == 3'
+          $H mget a b c | jq -e '.values | length == 3'
+          $H incr counter --by=5 | jq -e '.value == 5'
+          $H lpush mylist a b c | jq -e '.value == 3'
+          $H lrange mylist 0 -1 | jq -e '.values | length == 3'
+          $H sadd myset a b c | jq -e '.value == 3'
+          $H scard myset | jq -e '.value == 3'
+          $H hmset myhash name alice age 30 | jq -e '.set == 2'
+          $H hgetall myhash | jq -e '.name == "alice"'
+          $H zadd myzset 1 a 2 b 3 c | jq -e '.value == 3'
+          $H zrange myzset 0 -1 --withscores | jq -e '.values | length == 3'
+          $H type mylist | jq -e '.type == "list"'
+          $H dbsize | jq -e '.value > 0'
+          $H del foo a b c counter mylist myset myhash myzset | jq -e '.value > 0'
+          $H scan --match='*' --limit=10 || true
+
+  doc:
+    name: Doc
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --no-deps --locked
+
+  release-build:
+    name: Release Build (${{ matrix.target }})
+    needs: [check, test, helper-live-redis]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            target: x86_64-apple-darwin
+          - os: macos-latest
+            target: aarch64-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked --target ${{ matrix.target }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stryke-redis-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/stryke-redis-helper
