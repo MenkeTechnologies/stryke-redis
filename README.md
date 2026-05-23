@@ -1,11 +1,45 @@
-# stryke-redis
+```
+ ███████╗████████╗██████╗ ██╗   ██╗██╗  ██╗███████╗
+ ██╔════╝╚══██╔══╝██╔══██╗╚██╗ ██╔╝██║ ██╔╝██╔════╝
+ ███████╗   ██║   ██████╔╝ ╚████╔╝ █████╔╝ █████╗
+ ╚════██║   ██║   ██╔══██╗  ╚██╔╝  ██╔═██╗ ██╔══╝
+ ███████║   ██║   ██║  ██║   ██║   ██║  ██╗███████╗
+ ╚══════╝   ╚═╝   ╚═╝  ╚═╝   ╚═╝   ╚═╝  ╚═╝╚══════╝
+                   [ r e d i s ]
+```
+
+[![CI](https://github.com/MenkeTechnologies/stryke-redis/actions/workflows/ci.yml/badge.svg)](https://github.com/MenkeTechnologies/stryke-redis/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![stryke](https://img.shields.io/badge/stryke-package-cyan.svg)](https://github.com/MenkeTechnologies/strykelang)
+
+### `[REDIS / VALKEY CLIENT FOR STRYKE // KV + LISTS + SETS + HASHES + ZSETS + PUB/SUB + SCAN]`
+
+> *"In-memory state, one pipe away."*
 
 Redis / Valkey client for stryke. KV, lists, sets, hashes, sorted sets,
 pub/sub publish, scan, server admin. Opt-in package tier.
 
-Created by MenkeTechnologies.
+### [`strykelang`](https://github.com/MenkeTechnologies/strykelang) &middot; [`MenkeTechnologiesMeta`](https://github.com/MenkeTechnologies/MenkeTechnologiesMeta) · [`stryke-kafka`](https://github.com/MenkeTechnologies/stryke-kafka) · [`stryke-mongo`](https://github.com/MenkeTechnologies/stryke-mongo) · [`stryke-postgres`](https://github.com/MenkeTechnologies/stryke-postgres) · [`stryke-demo`](https://github.com/MenkeTechnologies/stryke-demo)
 
-## Why this is one of the most useful stryke packages
+---
+
+## Table of Contents
+
+- [\[0x00\] Why this is one of the most useful stryke packages](#0x00-why-this-is-one-of-the-most-useful-stryke-packages)
+- [\[0x01\] Install](#0x01-install)
+- [\[0x02\] Quick start](#0x02-quick-start)
+- [\[0x03\] CLI: `redis`](#0x03-cli-redis)
+- [\[0x04\] API reference (selected)](#0x04-api-reference-selected)
+- [\[0x05\] Helper protocol](#0x05-helper-protocol)
+- [\[0x06\] Tests](#0x06-tests)
+- [\[0x07\] Dev workflow](#0x07-dev-workflow)
+- [\[0x08\] Layout](#0x08-layout)
+- [\[0x09\] Roadmap](#0x09-roadmap)
+- [\[0xFF\] License](#0xff-license)
+
+---
+
+## [0x00] Why this is one of the most useful stryke packages
 
 A Redis client is the single highest-leverage missing daily-use
 integration. Caches, queues, deduplication sets, leaderboards, rate
@@ -18,7 +52,7 @@ use Redis
 Redis::set "rate-limit:user-42", "1", ex => 60, nx => 1
 ```
 
-## Install
+## [0x01] Install
 
 ```sh
 cd ~/projects/stryke-redis
@@ -32,7 +66,7 @@ Or:
 make install
 ```
 
-## Quick start
+## [0x02] Quick start
 
 ```stryke
 use Redis
@@ -95,7 +129,7 @@ Redis::get "foo", %prod
 
 Or compose from parts: `host`, `port`, `password`, `username`, `db`, `tls`.
 
-## CLI: `redis`
+## [0x03] CLI: `redis`
 
 ```sh
 redis ping
@@ -149,7 +183,7 @@ Global flags (also via env vars):
     --tls                  force TLS connection
 ```
 
-## API reference (selected)
+## [0x04] API reference (selected)
 
 ```stryke
 # KV
@@ -210,7 +244,7 @@ Redis::ping       %opts → 1 | ""
 Redis::raw        \@argv, %opts → \%resp          # arbitrary command
 ```
 
-## Helper protocol
+## [0x05] Helper protocol
 
 ```sh
 stryke-redis-helper set foo bar --ex=60
@@ -230,7 +264,7 @@ Output:
 
 Binary values that aren't valid UTF-8 come back as `"base64:..."` strings.
 
-## Tests
+## [0x06] Tests
 
 ```sh
 cargo test                                    # compiles, no live calls
@@ -248,7 +282,7 @@ brew services start redis
 docker run --rm -p 6379:6379 redis:7
 ```
 
-## Dev workflow
+## [0x07] Dev workflow
 
 ```sh
 make             # release build
@@ -258,7 +292,7 @@ make install
 make clean
 ```
 
-## Layout
+## [0x08] Layout
 
 ```
 stryke-redis/
@@ -282,7 +316,7 @@ stryke-redis/
     release.yml                    # cross-compile + GH release on tag push
 ```
 
-## Roadmap
+## [0x09] Roadmap
 
 | v1 (this release) | v2+ |
 |---|---|
@@ -292,6 +326,6 @@ stryke-redis/
 | String/binary values | RESP3 + RedisJSON / RedisSearch / RedisGraph |
 | `redis` 1.x sync API | Redis 8 Vector Sets + Bloom |
 
-## License
+## [0xFF] License
 
 MIT.
