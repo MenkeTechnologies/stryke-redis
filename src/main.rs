@@ -1304,4 +1304,67 @@ mod tests {
         // Without password the composed URL has no auth segment.
         assert!(!dbg.contains('@'), "dbg = {dbg}");
     }
+
+    #[test]
+    fn build_conn_info_tls_flag_with_custom_host() {
+        let mut c = empty_conn();
+        c.tls = true;
+        c.host = Some("secure.redis".into());
+        let dbg = format!("{:?}", build_conn_info(&c).unwrap());
+        assert!(dbg.contains("TcpTls"), "dbg = {dbg}");
+        assert!(dbg.contains("secure.redis"), "dbg = {dbg}");
+    }
+
+    #[test]
+    fn redis_value_to_json_set_single_member() {
+        use redis::Value as R;
+        let v = redis_value_to_json(&R::Set(vec![R::SimpleString("only".into())]));
+        assert_eq!(v, json!(["only"]));
+    }
+
+    #[test]
+    fn bytes_to_jsonish_carriage_return_utf8() {
+        assert_eq!(bytes_to_jsonish(b"a\rb".to_vec()), json!("a\rb"));
+    }
+
+    #[test]
+    fn emit_ndjson_positive_integer() {
+        let mut buf = Vec::new();
+        emit_ndjson(&mut buf, &json!(100)).unwrap();
+        assert_eq!(String::from_utf8(buf).unwrap(), "100\n");
+    }
+
+    #[test]
+    fn redis_value_to_json_map_with_ok_value() {
+        use redis::Value as R;
+        let v = redis_value_to_json(&R::Map(vec![(
+            R::SimpleString("status".into()),
+            R::Okay,
+        )]));
+        assert_eq!(v["status"], json!("OK"));
+    }
+
+    #[test]
+    fn redis_value_to_json_bulk_string_non_utf8() {
+        use redis::Value as R;
+        let v = redis_value_to_json(&R::BulkString(vec![0xFE]));
+        assert!(v.as_str().unwrap().starts_with("base64:"));
+    }
+
+    #[test]
+    fn build_conn_info_password_without_username() {
+        let mut c = empty_conn();
+        c.password = Some("secret".into());
+        assert!(build_conn_info(&c).is_ok());
+    }
+
+    #[test]
+    fn redis_value_to_json_verbatim_text_format() {
+        use redis::Value as R;
+        let v = redis_value_to_json(&R::VerbatimString {
+            format: redis::VerbatimFormat::Text,
+            text: "raw".into(),
+        });
+        assert_eq!(v, json!("raw"));
+    }
 }
