@@ -977,4 +977,331 @@ mod tests {
         }
         assert_eq!(String::from_utf8(buf).unwrap().lines().count(), 5);
     }
+
+    #[test]
+    fn build_conn_info_composed_url_includes_db_path() {
+        let mut c = empty_conn();
+        c.db = Some(5);
+        let dbg = format!("{:?}", build_conn_info(&c).unwrap());
+        assert!(dbg.contains("db: 5"), "dbg = {dbg}");
+    }
+
+    #[test]
+    fn build_conn_info_redis_scheme_when_tls_false() {
+        let dbg = format!("{:?}", build_conn_info(&empty_conn()).unwrap());
+        assert!(!dbg.contains("TcpTls"), "dbg = {dbg}");
+    }
+
+    #[test]
+    fn redis_value_to_json_server_error_stringifies() {
+        use std::io::Cursor;
+        use redis::Value as R;
+        let raw: R = redis::Parser::default()
+            .parse_value(Cursor::new(b"-ERR wrong type\r\n"))
+            .unwrap();
+        let R::ServerError(e) = raw else {
+            panic!("expected ServerError variant");
+        };
+        let v = redis_value_to_json(&R::ServerError(e));
+        let s = v.as_str().unwrap();
+        assert!(s.starts_with("error:"));
+        assert!(s.contains("wrong type"));
+    }
+
+    #[test]
+    fn redis_value_to_json_attribute_unwraps_data() {
+        use redis::Value as R;
+        let inner = R::Int(99);
+        let v = redis_value_to_json(&R::Attribute {
+            data: Box::new(inner),
+            attributes: vec![],
+        });
+        assert_eq!(v, json!(99));
+    }
+
+    #[test]
+    fn redis_value_to_json_verbatim_string_returns_text() {
+        use redis::Value as R;
+        let v = redis_value_to_json(&R::VerbatimString {
+            format: redis::VerbatimFormat::Text,
+            text: "bulk-string".into(),
+        });
+        assert_eq!(v, json!("bulk-string"));
+    }
+
+    #[test]
+    fn redis_value_to_json_push_becomes_array() {
+        use redis::Value as R;
+        let v = redis_value_to_json(&R::Push {
+            kind: redis::PushKind::Message,
+            data: vec![R::SimpleString("chan".into()), R::BulkString(b"hi".to_vec())],
+        });
+        assert_eq!(v, json!(["chan", "hi"]));
+    }
+
+    #[test]
+    fn redis_value_to_json_map_non_string_key_uses_debug() {
+        use redis::Value as R;
+        let v = redis_value_to_json(&R::Map(vec![(R::Int(1), R::Int(2))]));
+        let obj = v.as_object().unwrap();
+        assert!(obj.contains_key("1") || obj.keys().any(|k| k.contains('1')));
+        assert_eq!(obj.values().next().unwrap(), &json!(2));
+    }
+
+    #[test]
+    fn emit_int_and_emit_bool_wrap_value_key() {
+        let mut buf = Vec::new();
+        emit_ndjson(&mut buf, &json!({ "value": 7 })).unwrap();
+        assert!(String::from_utf8(buf).unwrap().contains("\"value\":7"));
+        let mut buf = Vec::new();
+        emit_ndjson(&mut buf, &json!({ "value": true })).unwrap();
+        assert!(String::from_utf8(buf).unwrap().contains("\"value\":true"));
+    }
+
+    #[test]
+    fn build_conn_info_custom_port_only() {
+        let mut c = empty_conn();
+        c.port = Some(6380);
+        let dbg = format!("{:?}", build_conn_info(&c).unwrap());
+        assert!(dbg.contains("6380"), "dbg = {dbg}");
+        assert!(dbg.contains("127.0.0.1"), "dbg = {dbg}");
+    }
+
+    #[test]
+    fn build_conn_info_no_password_omits_auth_segment() {
+        let mut c = empty_conn();
+        c.username = Some("alice".into());
+        let dbg = format!("{:?}", build_conn_info(&c).unwrap());
+        assert!(dbg.contains("127.0.0.1"));
+        // Without password the composed URL has no `@` auth block.
+        assert!(!dbg.contains('@') || !dbg.contains("alice@"), "dbg = {dbg}");
+    }
+
+    #[test]
+    fn bytes_to_jsonish_single_non_utf8_byte() {
+        let v = bytes_to_jsonish(vec![0x80]);
+        let s = v.as_str().unwrap();
+        assert!(s.starts_with("base64:"));
+    }
+
+    #[test]
+    fn redis_value_to_json_empty_bulk_string() {
+        use redis::Value as R;
+        assert_eq!(
+            redis_value_to_json(&R::BulkString(vec![])),
+            json!(""),
+        );
+    }
+
+    #[test]
+    fn redis_value_to_json_map_simple_string_keys() {
+        use redis::Value as R;
+        let v = redis_value_to_json(&R::Map(vec![(
+            R::SimpleString("k".into()),
+            R::Int(9),
+        )]));
+        assert_eq!(v["k"], json!(9));
+    }
+
+    #[test]
+    fn redis_value_to_json_double_and_ok_in_array() {
+        use redis::Value as R;
+        let v = redis_value_to_json(&R::Array(vec![R::Double(-1.5), R::Okay]));
+        assert_eq!(v, json!([-1.5, "OK"]));
+    }
+
+    #[test]
+    fn redis_value_to_json_verbatim_markdown_format() {
+        use redis::Value as R;
+        let v = redis_value_to_json(&R::VerbatimString {
+            format: redis::VerbatimFormat::Markdown,
+            text: "# title".into(),
+        });
+        assert_eq!(v, json!("# title"));
+    }
+
+    #[test]
+    fn redis_value_to_json_nested_array_of_ints() {
+        use redis::Value as R;
+        let v = redis_value_to_json(&R::Array(vec![
+            R::Array(vec![R::Int(1), R::Int(2)]),
+            R::Int(3),
+        ]));
+        assert_eq!(v, json!([[1, 2], 3]));
+    }
+
+    #[test]
+    fn redis_value_to_json_boolean_false() {
+        use redis::Value as R;
+        assert_eq!(redis_value_to_json(&R::Boolean(false)), json!(false));
+    }
+
+    #[test]
+    fn redis_value_to_json_negative_int() {
+        use redis::Value as R;
+        assert_eq!(redis_value_to_json(&R::Int(-42)), json!(-42));
+    }
+
+    #[test]
+    fn redis_value_to_json_simple_string_empty() {
+        use redis::Value as R;
+        assert_eq!(redis_value_to_json(&R::SimpleString(String::new())), json!(""));
+    }
+
+    #[test]
+    fn redis_value_to_json_set_to_array() {
+        use redis::Value as R;
+        let v = redis_value_to_json(&R::Set(vec![R::Int(2), R::Int(1)]));
+        assert_eq!(v, json!([2, 1]));
+    }
+
+    #[test]
+    fn redis_value_to_json_array_with_nil() {
+        use redis::Value as R;
+        let v = redis_value_to_json(&R::Array(vec![R::Nil, R::Int(0)]));
+        assert_eq!(v, json!([null, 0]));
+    }
+
+    #[test]
+    fn bytes_to_jsonish_emoji_utf8() {
+        assert_eq!(bytes_to_jsonish("🦀".as_bytes().to_vec()), json!("🦀"));
+    }
+
+    #[test]
+    fn build_conn_info_db_zero_in_debug() {
+        let mut c = empty_conn();
+        c.db = Some(0);
+        let dbg = format!("{:?}", build_conn_info(&c).unwrap());
+        assert!(dbg.contains("db: 0"), "dbg = {dbg}");
+    }
+
+    #[test]
+    fn redis_value_to_json_map_bulk_string_key() {
+        use redis::Value as R;
+        let v = redis_value_to_json(&R::Map(vec![(
+            R::BulkString(b"field".to_vec()),
+            R::SimpleString("val".into()),
+        )]));
+        assert_eq!(v["field"], json!("val"));
+    }
+
+    #[test]
+    fn build_conn_info_rediss_url_uses_tls() {
+        let mut c = empty_conn();
+        c.url = Some("rediss://cache.example.com:6380/1".into());
+        let dbg = format!("{:?}", build_conn_info(&c).unwrap());
+        assert!(dbg.contains("TcpTls"), "dbg = {dbg}");
+        assert!(dbg.contains("cache.example.com"), "dbg = {dbg}");
+    }
+
+    #[test]
+    fn redis_value_to_json_empty_map() {
+        use redis::Value as R;
+        let v = redis_value_to_json(&R::Map(vec![]));
+        assert_eq!(v, json!({}));
+    }
+
+    #[test]
+    fn redis_value_to_json_int_zero() {
+        use redis::Value as R;
+        assert_eq!(redis_value_to_json(&R::Int(0)), json!(0));
+    }
+
+    #[test]
+    fn bytes_to_jsonish_utf8_with_newline() {
+        assert_eq!(bytes_to_jsonish(b"a\nb".to_vec()), json!("a\nb"));
+    }
+
+    #[test]
+    fn build_conn_info_port_without_explicit_host() {
+        let mut c = empty_conn();
+        c.port = Some(6381);
+        let dbg = format!("{:?}", build_conn_info(&c).unwrap());
+        assert!(dbg.contains("127.0.0.1"), "dbg = {dbg}");
+        assert!(dbg.contains("6381"), "dbg = {dbg}");
+    }
+
+    #[test]
+    fn redis_value_to_json_simple_string_with_spaces() {
+        use redis::Value as R;
+        assert_eq!(
+            redis_value_to_json(&R::SimpleString("hello world".into())),
+            json!("hello world"),
+        );
+    }
+
+    #[test]
+    fn emit_ndjson_null_value() {
+        let mut buf = Vec::new();
+        emit_ndjson(&mut buf, &Value::Null).unwrap();
+        assert_eq!(String::from_utf8(buf).unwrap(), "null\n");
+    }
+
+    #[test]
+    fn build_conn_info_db_fifteen() {
+        let mut c = empty_conn();
+        c.db = Some(15);
+        let dbg = format!("{:?}", build_conn_info(&c).unwrap());
+        assert!(dbg.contains("db: 15"), "dbg = {dbg}");
+    }
+
+    #[test]
+    fn build_conn_info_host_only_override() {
+        let mut c = empty_conn();
+        c.host = Some("redis.internal".into());
+        let dbg = format!("{:?}", build_conn_info(&c).unwrap());
+        assert!(dbg.contains("redis.internal"), "dbg = {dbg}");
+        assert!(dbg.contains("6379"), "dbg = {dbg}");
+    }
+
+    #[test]
+    fn redis_value_to_json_double_negative() {
+        use redis::Value as R;
+        assert_eq!(redis_value_to_json(&R::Double(-0.5)), json!(-0.5));
+    }
+
+    #[test]
+    fn redis_value_to_json_push_empty_data_array() {
+        use redis::Value as R;
+        let v = redis_value_to_json(&R::Push {
+            kind: redis::PushKind::Message,
+            data: vec![],
+        });
+        assert_eq!(v, json!([]));
+    }
+
+    #[test]
+    fn bytes_to_jsonish_tab_in_utf8_string() {
+        assert_eq!(bytes_to_jsonish(b"a\tb".to_vec()), json!("a\tb"));
+    }
+
+    #[test]
+    fn emit_ndjson_false_bool() {
+        let mut buf = Vec::new();
+        emit_ndjson(&mut buf, &json!(false)).unwrap();
+        assert_eq!(String::from_utf8(buf).unwrap(), "false\n");
+    }
+
+    #[test]
+    fn emit_ndjson_empty_object() {
+        let mut buf = Vec::new();
+        emit_ndjson(&mut buf, &json!({})).unwrap();
+        assert_eq!(String::from_utf8(buf).unwrap(), "{}\n");
+    }
+
+    #[test]
+    fn redis_value_to_json_array_single_element() {
+        use redis::Value as R;
+        assert_eq!(redis_value_to_json(&R::Array(vec![R::Int(9)])), json!([9]));
+    }
+
+    #[test]
+    fn build_conn_info_username_only_no_password() {
+        let mut c = empty_conn();
+        c.username = Some("svc".into());
+        let dbg = format!("{:?}", build_conn_info(&c).unwrap());
+        assert!(dbg.contains("127.0.0.1"), "dbg = {dbg}");
+        // Without password the composed URL has no auth segment.
+        assert!(!dbg.contains('@'), "dbg = {dbg}");
+    }
 }
