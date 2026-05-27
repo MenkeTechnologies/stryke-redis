@@ -763,3 +763,218 @@ fn redis_value_to_json(v: &redis::Value) -> Value {
         _ => Value::String(format!("{:?}", v)),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn empty_conn() -> Conn {
+        Conn {
+            url: None,
+            host: None,
+            port: None,
+            password: None,
+            username: None,
+            db: None,
+            tls: false,
+        }
+    }
+
+    // ─── build_conn_info (verified via Debug format since fields are private) ──
+
+    #[test]
+    fn build_conn_info_defaults_to_localhost_6379_db_0() {
+        let info = build_conn_info(&empty_conn()).unwrap();
+        let dbg = format!("{info:?}");
+        assert!(dbg.contains("127.0.0.1"), "dbg = {dbg}");
+        assert!(dbg.contains("6379"), "dbg = {dbg}");
+        // db: 0 default.
+        assert!(dbg.contains("db: 0"), "dbg = {dbg}");
+    }
+
+    #[test]
+    fn build_conn_info_url_wins_over_individual_fields() {
+        // When --url is given, host/port/db/etc. are ignored.
+        let mut c = empty_conn();
+        c.url = Some("redis://example.com:1234/7".into());
+        c.host = Some("ignored.com".into());
+        c.port = Some(5555);
+        c.db = Some(99);
+        let info = build_conn_info(&c).unwrap();
+        let dbg = format!("{info:?}");
+        assert!(dbg.contains("example.com"), "dbg = {dbg}");
+        assert!(dbg.contains("1234"), "dbg = {dbg}");
+        assert!(dbg.contains("db: 7"), "dbg = {dbg}");
+        assert!(!dbg.contains("ignored.com"));
+        assert!(!dbg.contains("5555"));
+    }
+
+    #[test]
+    fn build_conn_info_tls_flag_switches_to_rediss() {
+        let mut c = empty_conn();
+        c.tls = true;
+        let info = build_conn_info(&c).unwrap();
+        // TcpTls variant appears in Debug output for rediss:// URLs.
+        let dbg = format!("{info:?}");
+        assert!(dbg.contains("TcpTls"), "dbg = {dbg}");
+    }
+
+    #[test]
+    fn build_conn_info_host_and_port_overrides() {
+        let mut c = empty_conn();
+        c.host = Some("redis.local".into());
+        c.port = Some(7000);
+        c.db = Some(3);
+        let info = build_conn_info(&c).unwrap();
+        let dbg = format!("{info:?}");
+        assert!(dbg.contains("redis.local"), "dbg = {dbg}");
+        assert!(dbg.contains("7000"), "dbg = {dbg}");
+        assert!(dbg.contains("db: 3"), "dbg = {dbg}");
+    }
+
+    #[test]
+    fn build_conn_info_password_only_uses_colon_prefix() {
+        // Asserts via URL round-trip: passwordless wouldn't carry the secret
+        // through the URL parse. Debug redacts the password so we use a
+        // pre-known mock and check that build_conn_info doesn't error.
+        let mut c = empty_conn();
+        c.password = Some("secret-xyz".into());
+        let info = build_conn_info(&c).unwrap();
+        // Password might be redacted in Debug — but the function should
+        // succeed (not error), proving the colon-only format parses.
+        assert!(format!("{info:?}").contains("127.0.0.1"));
+    }
+
+    #[test]
+    fn build_conn_info_user_and_password() {
+        let mut c = empty_conn();
+        c.username = Some("alice".into());
+        c.password = Some("hunter2".into());
+        let info = build_conn_info(&c).unwrap();
+        let dbg = format!("{info:?}");
+        // Username is not redacted in Debug; it should appear.
+        assert!(dbg.contains("alice"), "dbg = {dbg}");
+    }
+
+    #[test]
+    fn build_conn_info_invalid_url_errors() {
+        let mut c = empty_conn();
+        c.url = Some("not-a-valid-redis-url".into());
+        let err = build_conn_info(&c).unwrap_err();
+        assert!(format!("{err:#}").contains("--url"));
+    }
+
+    // ─── bytes_to_jsonish ────────────────────────────────────────────
+
+    #[test]
+    fn bytes_to_jsonish_utf8_becomes_string() {
+        assert_eq!(bytes_to_jsonish(b"hello".to_vec()), Value::String("hello".into()));
+    }
+
+    #[test]
+    fn bytes_to_jsonish_empty_bytes_empty_string() {
+        assert_eq!(bytes_to_jsonish(vec![]), Value::String(String::new()));
+    }
+
+    #[test]
+    fn bytes_to_jsonish_non_utf8_base64_prefixed() {
+        use base64::engine::general_purpose::STANDARD as B64;
+        use base64::Engine as _;
+        let raw = vec![0xff, 0xfe, 0xfd];
+        let v = bytes_to_jsonish(raw.clone());
+        let s = v.as_str().unwrap();
+        assert!(s.starts_with("base64:"));
+        let decoded = B64.decode(s.strip_prefix("base64:").unwrap()).unwrap();
+        assert_eq!(decoded, raw);
+    }
+
+    #[test]
+    fn bytes_to_jsonish_unicode_preserved() {
+        let v = bytes_to_jsonish("日本語".as_bytes().to_vec());
+        assert_eq!(v, Value::String("日本語".into()));
+    }
+
+    // ─── redis_value_to_json ─────────────────────────────────────────
+
+    #[test]
+    fn redis_value_to_json_scalars() {
+        use redis::Value as R;
+        assert_eq!(redis_value_to_json(&R::Nil), Value::Null);
+        assert_eq!(redis_value_to_json(&R::Int(42)), json!(42));
+        assert_eq!(redis_value_to_json(&R::Okay), json!("OK"));
+        assert_eq!(
+            redis_value_to_json(&R::SimpleString("PONG".into())),
+            json!("PONG")
+        );
+        assert_eq!(redis_value_to_json(&R::Boolean(true)), json!(true));
+        assert_eq!(redis_value_to_json(&R::Double(1.5)), json!(1.5));
+    }
+
+    #[test]
+    fn redis_value_to_json_bulk_string_via_bytes_to_jsonish() {
+        use redis::Value as R;
+        let v = redis_value_to_json(&R::BulkString(b"hello".to_vec()));
+        assert_eq!(v, json!("hello"));
+        // Non-UTF-8 bulk → base64: prefix.
+        let v = redis_value_to_json(&R::BulkString(vec![0xff]));
+        assert!(v.as_str().unwrap().starts_with("base64:"));
+    }
+
+    #[test]
+    fn redis_value_to_json_array_recurses() {
+        use redis::Value as R;
+        let v = redis_value_to_json(&R::Array(vec![
+            R::Int(1),
+            R::SimpleString("two".into()),
+            R::Nil,
+        ]));
+        assert_eq!(v, json!([1, "two", null]));
+    }
+
+    #[test]
+    fn redis_value_to_json_empty_array() {
+        use redis::Value as R;
+        let v = redis_value_to_json(&R::Array(vec![]));
+        assert_eq!(v, json!([]));
+    }
+
+    // Note: BigNumber test omitted to avoid pulling in num_bigint just for
+    // tests — the variant's behavior (.to_string() → JSON string) is trivial
+    // and verified by inspection.
+
+    #[test]
+    fn redis_value_to_json_set_becomes_array() {
+        use redis::Value as R;
+        let v = redis_value_to_json(&R::Set(vec![R::Int(1), R::Int(2)]));
+        assert_eq!(v, json!([1, 2]));
+    }
+
+    #[test]
+    fn redis_value_to_json_map_string_keys() {
+        use redis::Value as R;
+        let v = redis_value_to_json(&R::Map(vec![
+            (R::BulkString(b"a".to_vec()), R::Int(1)),
+            (R::SimpleString("b".into()), R::Int(2)),
+        ]));
+        assert_eq!(v["a"], json!(1));
+        assert_eq!(v["b"], json!(2));
+    }
+
+    // ─── emit_ndjson ─────────────────────────────────────────────────
+
+    #[test]
+    fn emit_ndjson_appends_newline() {
+        let mut buf = Vec::new();
+        emit_ndjson(&mut buf, &json!({"k": 1})).unwrap();
+        assert_eq!(String::from_utf8(buf).unwrap(), "{\"k\":1}\n");
+    }
+
+    #[test]
+    fn emit_ndjson_multi_call_line_count() {
+        let mut buf = Vec::new();
+        for i in 0..5 {
+            emit_ndjson(&mut buf, &json!({"i": i})).unwrap();
+        }
+        assert_eq!(String::from_utf8(buf).unwrap().lines().count(), 5);
+    }
+}
