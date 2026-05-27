@@ -1367,4 +1367,61 @@ mod tests {
         });
         assert_eq!(v, json!("raw"));
     }
+
+    #[test]
+    fn redis_value_to_json_boolean_true() {
+        use redis::Value as R;
+        assert_eq!(redis_value_to_json(&R::Boolean(true)), json!(true));
+    }
+
+    #[test]
+    fn emit_ndjson_nested_object_one_field() {
+        let mut buf = Vec::new();
+        emit_ndjson(&mut buf, &json!({"k": "v"})).unwrap();
+        assert_eq!(String::from_utf8(buf).unwrap(), "{\"k\":\"v\"}\n");
+    }
+
+    #[test]
+    fn build_conn_info_custom_port_6380() {
+        let mut c = empty_conn();
+        c.port = Some(6380);
+        let dbg = format!("{:?}", build_conn_info(&c).unwrap());
+        assert!(dbg.contains("6380"), "dbg = {dbg}");
+    }
+
+    #[test]
+    fn redis_value_to_json_map_two_keys() {
+        use redis::Value as R;
+        let v = redis_value_to_json(&R::Map(vec![
+            (R::SimpleString("a".into()), R::Int(1)),
+            (R::SimpleString("b".into()), R::Int(2)),
+        ]));
+        assert_eq!(v["a"], json!(1));
+        assert_eq!(v["b"], json!(2));
+    }
+
+    #[test]
+    fn redis_value_to_json_push_two_elements() {
+        use redis::Value as R;
+        let v = redis_value_to_json(&R::Push {
+            kind: redis::PushKind::Message,
+            data: vec![R::SimpleString("ch".into()), R::BulkString(b"hi".to_vec())],
+        });
+        assert_eq!(v.as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn bytes_to_jsonish_backslash_utf8() {
+        assert_eq!(bytes_to_jsonish(b"a\\b".to_vec()), json!("a\\b"));
+    }
+
+    #[test]
+    fn build_conn_info_username_and_password_fields() {
+        let mut c = empty_conn();
+        c.username = Some("u".into());
+        c.password = Some("p".into());
+        let dbg = format!("{:?}", build_conn_info(&c).unwrap());
+        assert!(dbg.contains("username: Some(\"u\")"), "dbg = {dbg}");
+        assert!(dbg.contains("password: Some"), "dbg = {dbg}");
+    }
 }
