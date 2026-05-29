@@ -1562,16 +1562,22 @@ mod tests {
     // output.
 
     #[test]
-    fn bytes_to_jsonish_invalid_utf8_becomes_byte_array() {
-        // 0xC3 0x28 is invalid UTF-8 (overlong sequence).
+    fn bytes_to_jsonish_invalid_utf8_becomes_base64_prefixed_string() {
+        // 0xC3 0x28 is invalid UTF-8 (overlong sequence). The host
+        // encodes those as `"base64:<b64>"` so the JSON output stays
+        // a single string scalar (consumers can switch on the prefix
+        // and decode if they need the raw bytes back).
         let v = bytes_to_jsonish(vec![0xC3, 0x28]);
         match v {
-            Value::Array(arr) => {
-                assert_eq!(arr.len(), 2);
-                assert_eq!(arr[0].as_u64(), Some(0xC3));
-                assert_eq!(arr[1].as_u64(), Some(0x28));
+            Value::String(s) => {
+                assert!(
+                    s.starts_with("base64:"),
+                    "invalid-utf8 output must use the `base64:` marker; got {s:?}"
+                );
+                // base64 of [0xC3, 0x28] = "wyg="
+                assert_eq!(s, "base64:wyg=");
             }
-            other => panic!("expected JSON array for invalid UTF-8, got {other:?}"),
+            other => panic!("expected Value::String('base64:...'), got {other:?}"),
         }
     }
 
