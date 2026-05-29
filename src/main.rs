@@ -58,7 +58,9 @@ struct Conn {
 #[derive(Subcommand, Debug)]
 enum Cmd {
     // ---- KV ----
-    Get { key: String },
+    Get {
+        key: String,
+    },
     Set {
         key: String,
         value: String,
@@ -73,11 +75,22 @@ enum Cmd {
         #[arg(long)]
         xx: bool,
     },
-    Del { keys: Vec<String> },
-    Exists { keys: Vec<String> },
-    Expire { key: String, seconds: i64 },
-    Ttl { key: String },
-    Type { key: String },
+    Del {
+        keys: Vec<String>,
+    },
+    Exists {
+        keys: Vec<String>,
+    },
+    Expire {
+        key: String,
+        seconds: i64,
+    },
+    Ttl {
+        key: String,
+    },
+    Type {
+        key: String,
+    },
     Incr {
         key: String,
         #[arg(long, default_value_t = 1)]
@@ -88,13 +101,17 @@ enum Cmd {
         #[arg(long, default_value_t = 1)]
         by: i64,
     },
-    Mget { keys: Vec<String> },
+    Mget {
+        keys: Vec<String>,
+    },
     Mset {
         /// `key value key value …`
         kv: Vec<String>,
     },
     /// Glob-style `KEYS PATTERN`. Use sparingly on prod databases; prefer `scan`.
-    Keys { pattern: String },
+    Keys {
+        pattern: String,
+    },
     /// Streaming SCAN — emits NDJSON keys without blocking the server.
     Scan {
         #[arg(long, default_value = "*")]
@@ -106,8 +123,14 @@ enum Cmd {
     },
 
     // ---- Lists ----
-    Lpush { key: String, values: Vec<String> },
-    Rpush { key: String, values: Vec<String> },
+    Lpush {
+        key: String,
+        values: Vec<String>,
+    },
+    Rpush {
+        key: String,
+        values: Vec<String>,
+    },
     Lpop {
         key: String,
         #[arg(long)]
@@ -125,23 +148,57 @@ enum Cmd {
         #[arg(default_value_t = -1, allow_hyphen_values = true)]
         stop: isize,
     },
-    Llen { key: String },
+    Llen {
+        key: String,
+    },
 
     // ---- Sets ----
-    Sadd { key: String, members: Vec<String> },
-    Srem { key: String, members: Vec<String> },
-    Smembers { key: String },
-    Sismember { key: String, member: String },
-    Scard { key: String },
+    Sadd {
+        key: String,
+        members: Vec<String>,
+    },
+    Srem {
+        key: String,
+        members: Vec<String>,
+    },
+    Smembers {
+        key: String,
+    },
+    Sismember {
+        key: String,
+        member: String,
+    },
+    Scard {
+        key: String,
+    },
 
     // ---- Hashes ----
-    Hset { key: String, field: String, value: String },
-    Hget { key: String, field: String },
-    Hdel { key: String, fields: Vec<String> },
-    Hgetall { key: String },
-    Hkeys { key: String },
-    Hvals { key: String },
-    Hmget { key: String, fields: Vec<String> },
+    Hset {
+        key: String,
+        field: String,
+        value: String,
+    },
+    Hget {
+        key: String,
+        field: String,
+    },
+    Hdel {
+        key: String,
+        fields: Vec<String>,
+    },
+    Hgetall {
+        key: String,
+    },
+    Hkeys {
+        key: String,
+    },
+    Hvals {
+        key: String,
+    },
+    Hmget {
+        key: String,
+        fields: Vec<String>,
+    },
     Hmset {
         key: String,
         /// `field value field value …`
@@ -165,12 +222,23 @@ enum Cmd {
         #[arg(long)]
         rev: bool,
     },
-    Zrem { key: String, members: Vec<String> },
-    Zcard { key: String },
-    Zscore { key: String, member: String },
+    Zrem {
+        key: String,
+        members: Vec<String>,
+    },
+    Zcard {
+        key: String,
+    },
+    Zscore {
+        key: String,
+        member: String,
+    },
 
     // ---- Pub/sub publish (sub is streaming, out of scope for v1) ----
-    Publish { channel: String, message: String },
+    Publish {
+        channel: String,
+        message: String,
+    },
 
     // ---- Server ----
     Ping,
@@ -186,7 +254,9 @@ enum Cmd {
 
     /// Run an arbitrary command. `args` is the raw arg vector (first item
     /// is the command name). Use sparingly — no type validation.
-    Raw { args: Vec<String> },
+    Raw {
+        args: Vec<String>,
+    },
 }
 
 fn main() {
@@ -204,7 +274,14 @@ fn run() -> Result<()> {
     match cli.cmd {
         // KV
         Cmd::Get { key } => cmd_get(&mut con, &key),
-        Cmd::Set { key, value, ex, px, nx, xx } => cmd_set(&mut con, &key, &value, ex, px, nx, xx),
+        Cmd::Set {
+            key,
+            value,
+            ex,
+            px,
+            nx,
+            xx,
+        } => cmd_set(&mut con, &key, &value, ex, px, nx, xx),
         Cmd::Del { keys } => emit_int(redis_del(&mut con, &keys)?),
         Cmd::Exists { keys } => emit_int(redis_exists(&mut con, &keys)?),
         Cmd::Expire { key, seconds } => emit_bool(redis_expire(&mut con, &key, seconds)?),
@@ -215,7 +292,11 @@ fn run() -> Result<()> {
         Cmd::Mget { keys } => cmd_mget(&mut con, &keys),
         Cmd::Mset { kv } => cmd_mset(&mut con, &kv),
         Cmd::Keys { pattern } => cmd_keys(&mut con, &pattern),
-        Cmd::Scan { match_, count, limit } => cmd_scan(&mut con, &match_, count, limit),
+        Cmd::Scan {
+            match_,
+            count,
+            limit,
+        } => cmd_scan(&mut con, &match_, count, limit),
 
         // Lists
         Cmd::Lpush { key, values } => emit_int(redis_lpush(&mut con, &key, &values)?),
@@ -244,9 +325,13 @@ fn run() -> Result<()> {
 
         // Sorted sets
         Cmd::Zadd { key, sm } => cmd_zadd(&mut con, &key, &sm),
-        Cmd::Zrange { key, start, stop, withscores, rev } => {
-            cmd_zrange(&mut con, &key, start, stop, withscores, rev)
-        }
+        Cmd::Zrange {
+            key,
+            start,
+            stop,
+            withscores,
+            rev,
+        } => cmd_zrange(&mut con, &key, start, stop, withscores, rev),
         Cmd::Zrem { key, members } => emit_int(redis_zrem(&mut con, &key, &members)?),
         Cmd::Zcard { key } => emit_int(redis_zcard(&mut con, &key)?),
         Cmd::Zscore { key, member } => cmd_zscore(&mut con, &key, &member),
@@ -272,7 +357,9 @@ fn build_conn_info(c: &Conn) -> Result<ConnectionInfo> {
     // Always build via a URL so flag-level overrides compose cleanly with
     // env defaults. The redis crate's URL parser handles auth, db, TLS.
     let info = if let Some(url) = &c.url {
-        url.clone().into_connection_info().context("parsing --url")?
+        url.clone()
+            .into_connection_info()
+            .context("parsing --url")?
     } else {
         let scheme = if c.tls { "rediss" } else { "redis" };
         let host = c.host.clone().unwrap_or_else(|| "127.0.0.1".to_string());
@@ -409,7 +496,7 @@ fn cmd_mget(con: &mut Connection, keys: &[String]) -> Result<()> {
 }
 
 fn cmd_mset(con: &mut Connection, kv: &[String]) -> Result<()> {
-    if kv.len() % 2 != 0 {
+    if !kv.len().is_multiple_of(2) {
         bail!("mset takes pairs of `key value …` — got {} args", kv.len());
     }
     let pairs: Vec<(&str, &str)> = kv
@@ -590,10 +677,16 @@ fn cmd_hmget(con: &mut Connection, key: &str, fields: &[String]) -> Result<()> {
 }
 
 fn cmd_hmset(con: &mut Connection, key: &str, fv: &[String]) -> Result<()> {
-    if fv.len() % 2 != 0 {
-        bail!("hmset takes pairs of `field value …` — got {} args", fv.len());
+    if !fv.len().is_multiple_of(2) {
+        bail!(
+            "hmset takes pairs of `field value …` — got {} args",
+            fv.len()
+        );
     }
-    let pairs: Vec<(&str, &str)> = fv.chunks(2).map(|c| (c[0].as_str(), c[1].as_str())).collect();
+    let pairs: Vec<(&str, &str)> = fv
+        .chunks(2)
+        .map(|c| (c[0].as_str(), c[1].as_str()))
+        .collect();
     let _: () = con.hset_multiple(key, &pairs)?;
     emit_json(&json!({ "ok": true, "set": pairs.len() }))
 }
@@ -603,8 +696,11 @@ fn cmd_hmset(con: &mut Connection, key: &str, fv: &[String]) -> Result<()> {
 /* ------------------------------------------------------------------------- */
 
 fn cmd_zadd(con: &mut Connection, key: &str, sm: &[String]) -> Result<()> {
-    if sm.len() % 2 != 0 {
-        bail!("zadd takes pairs of `score member …` — got {} args", sm.len());
+    if !sm.len().is_multiple_of(2) {
+        bail!(
+            "zadd takes pairs of `score member …` — got {} args",
+            sm.len()
+        );
     }
     let mut cmd = redis::cmd("ZADD");
     cmd.arg(key);
@@ -630,9 +726,7 @@ fn cmd_zrange(
         let raw: Vec<(Vec<u8>, f64)> = cmd.query(con)?;
         let arr: Vec<Value> = raw
             .into_iter()
-            .map(|(m, s)| {
-                json!({ "member": bytes_to_jsonish(m), "score": s })
-            })
+            .map(|(m, s)| json!({ "member": bytes_to_jsonish(m), "score": s }))
             .collect();
         emit_json(&json!({ "values": arr }))
     } else {
@@ -689,7 +783,10 @@ fn cmd_info(con: &mut Connection, section: &str) -> Result<()> {
         }
         if let Some(sec) = line.strip_prefix("# ") {
             if !cur_obj.is_empty() {
-                groups.insert(std::mem::take(&mut cur_section), Value::Object(std::mem::take(&mut cur_obj)));
+                groups.insert(
+                    std::mem::take(&mut cur_section),
+                    Value::Object(std::mem::take(&mut cur_obj)),
+                );
             }
             cur_section = sec.to_string();
             continue;
@@ -757,7 +854,10 @@ fn redis_value_to_json(v: &redis::Value) -> Value {
             Value::Object(obj)
         }
         R::Set(arr) => Value::Array(arr.iter().map(redis_value_to_json).collect()),
-        R::Attribute { data, attributes: _ } => redis_value_to_json(data),
+        R::Attribute {
+            data,
+            attributes: _,
+        } => redis_value_to_json(data),
         R::Push { kind: _, data } => Value::Array(data.iter().map(redis_value_to_json).collect()),
         R::VerbatimString { format: _, text } => Value::String(text.clone()),
         _ => Value::String(format!("{:?}", v)),
@@ -868,7 +968,10 @@ mod tests {
 
     #[test]
     fn bytes_to_jsonish_utf8_becomes_string() {
-        assert_eq!(bytes_to_jsonish(b"hello".to_vec()), Value::String("hello".into()));
+        assert_eq!(
+            bytes_to_jsonish(b"hello".to_vec()),
+            Value::String("hello".into())
+        );
     }
 
     #[test]
@@ -994,8 +1097,8 @@ mod tests {
 
     #[test]
     fn redis_value_to_json_server_error_stringifies() {
-        use std::io::Cursor;
         use redis::Value as R;
+        use std::io::Cursor;
         let raw: R = redis::Parser::default()
             .parse_value(Cursor::new(b"-ERR wrong type\r\n"))
             .unwrap();
@@ -1034,7 +1137,10 @@ mod tests {
         use redis::Value as R;
         let v = redis_value_to_json(&R::Push {
             kind: redis::PushKind::Message,
-            data: vec![R::SimpleString("chan".into()), R::BulkString(b"hi".to_vec())],
+            data: vec![
+                R::SimpleString("chan".into()),
+                R::BulkString(b"hi".to_vec()),
+            ],
         });
         assert_eq!(v, json!(["chan", "hi"]));
     }
@@ -1087,19 +1193,13 @@ mod tests {
     #[test]
     fn redis_value_to_json_empty_bulk_string() {
         use redis::Value as R;
-        assert_eq!(
-            redis_value_to_json(&R::BulkString(vec![])),
-            json!(""),
-        );
+        assert_eq!(redis_value_to_json(&R::BulkString(vec![])), json!(""),);
     }
 
     #[test]
     fn redis_value_to_json_map_simple_string_keys() {
         use redis::Value as R;
-        let v = redis_value_to_json(&R::Map(vec![(
-            R::SimpleString("k".into()),
-            R::Int(9),
-        )]));
+        let v = redis_value_to_json(&R::Map(vec![(R::SimpleString("k".into()), R::Int(9))]));
         assert_eq!(v["k"], json!(9));
     }
 
@@ -1145,7 +1245,10 @@ mod tests {
     #[test]
     fn redis_value_to_json_simple_string_empty() {
         use redis::Value as R;
-        assert_eq!(redis_value_to_json(&R::SimpleString(String::new())), json!(""));
+        assert_eq!(
+            redis_value_to_json(&R::SimpleString(String::new())),
+            json!("")
+        );
     }
 
     #[test]
@@ -1337,10 +1440,7 @@ mod tests {
     #[test]
     fn redis_value_to_json_map_with_ok_value() {
         use redis::Value as R;
-        let v = redis_value_to_json(&R::Map(vec![(
-            R::SimpleString("status".into()),
-            R::Okay,
-        )]));
+        let v = redis_value_to_json(&R::Map(vec![(R::SimpleString("status".into()), R::Okay)]));
         assert_eq!(v["status"], json!("OK"));
     }
 
