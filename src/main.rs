@@ -1524,4 +1524,62 @@ mod tests {
         assert!(dbg.contains("username: Some(\"u\")"), "dbg = {dbg}");
         assert!(dbg.contains("password: Some"), "dbg = {dbg}");
     }
+
+    // ─── build_conn_info error surface ───────────────────────────────
+    //
+    // CLI scripts depend on anyhow chain context for `--url` failures
+    // so they can route the error correctly (auth vs scheme vs DNS).
+    // Pin the context strings.
+
+    #[test]
+    fn build_conn_info_bad_url_surfaces_parsing_url_context() {
+        let mut c = empty_conn();
+        c.url = Some("not-a-redis-url".into());
+        let err = build_conn_info(&c).unwrap_err();
+        let chain: Vec<_> = err.chain().map(|c| c.to_string()).collect();
+        assert!(
+            chain.iter().any(|s| s.contains("parsing --url")),
+            "expected `parsing --url` in chain; got {chain:?}"
+        );
+    }
+
+    #[test]
+    fn build_conn_info_password_only_renders_in_url_form() {
+        // No username + password should still produce a valid URL
+        // (matches the leading-colon form `:p@host`).
+        let mut c = empty_conn();
+        c.password = Some("secret".into());
+        let info = build_conn_info(&c).unwrap();
+        let dbg = format!("{info:?}");
+        assert!(dbg.contains("password: Some"), "dbg = {dbg}");
+    }
+
+    // ─── bytes_to_jsonish round-trip pins ────────────────────────────
+    //
+    // Redis returns raw bytes; the CLI emits JSON. The contract is:
+    // valid UTF-8 → JSON string, anything else → JSON array of u8.
+    // Drift here silently corrupts every cmd_get / hget / lrange
+    // output.
+
+    #[test]
+    fn bytes_to_jsonish_invalid_utf8_becomes_byte_array() {
+        // 0xC3 0x28 is invalid UTF-8 (overlong sequence).
+        let v = bytes_to_jsonish(vec![0xC3, 0x28]);
+        match v {
+            Value::Array(arr) => {
+                assert_eq!(arr.len(), 2);
+                assert_eq!(arr[0].as_u64(), Some(0xC3));
+                assert_eq!(arr[1].as_u64(), Some(0x28));
+            }
+            other => panic!("expected JSON array for invalid UTF-8, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn bytes_to_jsonish_empty_bytes_become_empty_string() {
+        // Empty input is valid UTF-8 (the empty string), so the
+        // string branch wins — NOT an empty array.
+        let v = bytes_to_jsonish(Vec::new());
+        assert_eq!(v, Value::String(String::new()));
+    }
 }
