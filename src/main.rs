@@ -1588,4 +1588,103 @@ mod tests {
         let v = bytes_to_jsonish(Vec::new());
         assert_eq!(v, Value::String(String::new()));
     }
+
+    // ─── clap parsing — top-level Cli + Cmd variants ────────────────────
+    // These tests pin the user-facing CLI contract: required positionals,
+    // default values, and subcommand routing. Drift here would silently
+    // change which redis ops fire for a given argv (catastrophic for users
+    // wrapping the helper from shell scripts and stryke `qx` callsites).
+
+    use clap::Parser;
+
+    fn parse_cli(args: &[&str]) -> Result<Cli, clap::Error> {
+        let mut argv = vec!["stryke-redis-helper"];
+        argv.extend_from_slice(args);
+        Cli::try_parse_from(argv)
+    }
+
+    #[test]
+    fn cli_ping_routes_to_ping_variant_with_no_conn_overrides() {
+        // Without --url/--host the connection layer falls back to
+        // localhost:6379 inside build_conn_info; the Cli surface itself
+        // must accept zero connection flags and pick Ping.
+        let cli = parse_cli(&["ping"]).expect("parse");
+        assert!(matches!(cli.cmd, Cmd::Ping));
+        assert!(cli.conn.url.is_none());
+        assert!(cli.conn.host.is_none());
+        assert!(!cli.conn.tls);
+    }
+
+    #[test]
+    fn cli_set_requires_key_and_value_positionals() {
+        let err = parse_cli(&["set"]).expect_err("missing key+value");
+        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+        let err = parse_cli(&["set", "only-key"]).expect_err("missing value");
+        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+    }
+
+    #[test]
+    fn cli_set_nx_xx_default_false_and_ex_default_none() {
+        let cli = parse_cli(&["set", "k", "v"]).expect("parse");
+        match cli.cmd {
+            Cmd::Set { nx, xx, ex, px, .. } => {
+                assert!(!nx, "--nx must be opt-in");
+                assert!(!xx, "--xx must be opt-in");
+                assert!(ex.is_none(), "--ex must default to None (no TTL)");
+                assert!(px.is_none(), "--px must default to None (no TTL)");
+            }
+            _ => panic!("expected Set"),
+        }
+    }
+
+    #[test]
+    fn cli_lrange_default_start_zero_stop_negative_one() {
+        // Pin the redis-CLI parity: `LRANGE k` with no positionals must
+        // return the whole list (start=0, stop=-1). Drift here would
+        // silently change which slice users get without an explicit range.
+        let cli = parse_cli(&["lrange", "mykey"]).expect("parse");
+        match cli.cmd {
+            Cmd::Lrange { start, stop, .. } => {
+                assert_eq!(start, 0);
+                assert_eq!(stop, -1);
+            }
+            _ => panic!("expected Lrange"),
+        }
+    }
+
+    #[test]
+    fn cli_scan_defaults_match_glob_star_and_count_100() {
+        // Pin the safe-scan default: pattern '*' (everything) and batch
+        // size 100 (matches redis-cli convention; non-blocking on prod).
+        let cli = parse_cli(&["scan"]).expect("parse");
+        match cli.cmd {
+            Cmd::Scan {
+                match_,
+                count,
+                limit,
+            } => {
+                assert_eq!(match_, "*");
+                assert_eq!(count, 100);
+                assert!(limit.is_none(), "--limit None = stream all");
+            }
+            _ => panic!("expected Scan"),
+        }
+    }
+
+    #[test]
+    fn cli_incr_decr_default_by_is_one() {
+        // Pin the redis-INCR contract: step=1 unless --by is supplied.
+        // A drift here would silently change the meaning of `incr key`
+        // for every caller.
+        let inc = parse_cli(&["incr", "k"]).expect("parse incr");
+        match inc.cmd {
+            Cmd::Incr { by, .. } => assert_eq!(by, 1),
+            _ => panic!("expected Incr"),
+        }
+        let dec = parse_cli(&["decr", "k"]).expect("parse decr");
+        match dec.cmd {
+            Cmd::Decr { by, .. } => assert_eq!(by, 1),
+            _ => panic!("expected Decr"),
+        }
+    }
 }
