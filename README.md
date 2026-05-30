@@ -268,7 +268,7 @@ Binary values that aren't valid UTF-8 come back as `"base64:..."` strings.
 
 ```sh
 cargo test                                    # compiles, no live calls
-REDIS_URL=redis://localhost s test t/         # 12-test round-trip
+REDIS_URL=redis://localhost s test t/         # live round-trip suite
 ```
 
 Test keys are scoped under `stryke:test:$$:` and cleaned at exit.
@@ -299,20 +299,22 @@ stryke-redis/
   stryke.toml                      # stryke package manifest
   Cargo.toml                       # Rust helper crate manifest
   Makefile
-  src/main.rs                      # single-file helper, ~800 LOC
+  src/main.rs                      # single-file helper binary
   lib/
     Redis.stk                      # `use Redis`
-  bin/
-    redis.stk                      # `redis` CLI
-    redis-build.stk
   t/
-    test_redis.stk                 # 12-test live round-trip
+    test_redis.stk                 # live round-trip test suite
+  tests/
+    contract_cli_round4.rs         # Rust contract tests
   examples/
     kv.stk
     structures.stk
     publish.stk
+  docs/
+    index.html                     # docs site
+    report.html
   .github/workflows/
-    ci.yml                         # redis:7 service + 12-test round-trip
+    ci.yml                         # redis:7 service + live round-trip
     release.yml                    # cross-compile + GH release on tag push
 ```
 
