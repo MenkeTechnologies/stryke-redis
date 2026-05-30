@@ -1687,4 +1687,137 @@ mod tests {
             _ => panic!("expected Decr"),
         }
     }
+
+    // ─── clap parsing — Conn flatten + more Cmd surfaces (round 2) ─────
+    // Previous round pinned ping/set/lrange/scan/incr-decr defaults.
+    // These pin: (a) full Conn flatten surface — every connection flag
+    // defaults unset / false; (b) Conn fields thread through when supplied
+    // (env-var fallback is upstream of clap so not testable here);
+    // (c) Hset requires THREE positionals (key, field, value); (d) Set
+    // --ex and --px are NOT mutex'd at parse time (downstream code must
+    // validate — pin actual behavior so future mutex addition is a
+    // deliberate change, not silent drift); (e) Zrange --withscores /
+    // --rev both default false (sorted-set ordering is ascending without
+    // scores by default); (f) Type/Ttl/Expire require key positional.
+
+    #[test]
+    fn cli_conn_full_flatten_all_default_unset() {
+        // Pin: bare `ping` populates Conn with all defaults — url/host/
+        // port/username/password/db all None, tls=false. Drift to a
+        // populated default would silently mask env-var resolution bugs
+        // by routing every command to one fixed instance.
+        let cli = parse_cli(&["ping"]).expect("parse");
+        assert!(cli.conn.url.is_none());
+        assert!(cli.conn.host.is_none());
+        assert!(cli.conn.port.is_none());
+        assert!(cli.conn.username.is_none());
+        assert!(cli.conn.password.is_none());
+        assert!(cli.conn.db.is_none());
+        assert!(!cli.conn.tls);
+    }
+
+    #[test]
+    fn cli_conn_flags_thread_through_when_supplied() {
+        // Pin: every Conn flag accepts an explicit value and binds to its
+        // matched field. --tls flips bool; --db accepts i64 (Redis logical
+        // database index — i64 is wider than the typical 0..15 range but
+        // matches the redis crate's API signature).
+        let cli = parse_cli(&[
+            "--url",
+            "redis://primary:6380/0",
+            "--host",
+            "h.internal",
+            "--port",
+            "6380",
+            "--username",
+            "ro",
+            "--db",
+            "3",
+            "--tls",
+            "ping",
+        ])
+        .expect("parse");
+        assert_eq!(cli.conn.url.as_deref(), Some("redis://primary:6380/0"));
+        assert_eq!(cli.conn.host.as_deref(), Some("h.internal"));
+        assert_eq!(cli.conn.port, Some(6380));
+        assert_eq!(cli.conn.username.as_deref(), Some("ro"));
+        assert_eq!(cli.conn.db, Some(3));
+        assert!(cli.conn.tls);
+    }
+
+    #[test]
+    fn cli_set_ex_and_px_accepted_at_parse_without_mutex_enforcement() {
+        // Pin actual behavior: --ex and --px are both Option<u64> with NO
+        // clap-level conflicts_with — meaning the parser accepts both
+        // simultaneously. Downstream Redis SET resolves which TTL wins
+        // (or rejects). Adding a `conflicts_with` later is a deliberate
+        // change, not a silent drift; this test documents the current
+        // contract so the change shows up as a test break.
+        let cli = parse_cli(&["set", "k", "v", "--ex", "60", "--px", "5000"]).expect("parse");
+        match cli.cmd {
+            Cmd::Set { ex, px, .. } => {
+                assert_eq!(ex, Some(60));
+                assert_eq!(px, Some(5000));
+            }
+            _ => panic!("expected Set"),
+        }
+    }
+
+    #[test]
+    fn cli_hset_requires_three_positionals_key_field_value() {
+        // Pin: HSET takes (key, field, value) — three required positionals.
+        // Drift to two would silently bind value into field (corrupting
+        // every hash write) or fail at the Redis call.
+        use clap::error::ErrorKind::MissingRequiredArgument;
+        assert_eq!(
+            parse_cli(&["hset"]).unwrap_err().kind(),
+            MissingRequiredArgument
+        );
+        assert_eq!(
+            parse_cli(&["hset", "k"]).unwrap_err().kind(),
+            MissingRequiredArgument
+        );
+        assert_eq!(
+            parse_cli(&["hset", "k", "f"]).unwrap_err().kind(),
+            MissingRequiredArgument
+        );
+        let cli = parse_cli(&["hset", "user:1", "name", "alice"]).expect("parse");
+        match cli.cmd {
+            Cmd::Hset { key, field, value } => {
+                assert_eq!(key, "user:1");
+                assert_eq!(field, "name");
+                assert_eq!(value, "alice");
+            }
+            _ => panic!("expected Hset"),
+        }
+    }
+
+    #[test]
+    fn cli_zrange_withscores_and_rev_default_false_with_key_required() {
+        // Pin: --withscores opt-in (ZRANGE without scores by default —
+        // matches redis-cli). --rev defaults false (ascending order).
+        // Drift here would silently change which sorted-set slice users
+        // get without flags.
+        use clap::error::ErrorKind::MissingRequiredArgument;
+        assert_eq!(
+            parse_cli(&["zrange"]).unwrap_err().kind(),
+            MissingRequiredArgument
+        );
+        let cli = parse_cli(&["zrange", "leaderboard"]).expect("parse");
+        match cli.cmd {
+            Cmd::Zrange {
+                start,
+                stop,
+                withscores,
+                rev,
+                ..
+            } => {
+                assert_eq!(start, 0);
+                assert_eq!(stop, -1);
+                assert!(!withscores, "scores omitted by default");
+                assert!(!rev, "ascending by default");
+            }
+            _ => panic!("expected Zrange"),
+        }
+    }
 }
