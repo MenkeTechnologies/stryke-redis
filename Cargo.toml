@@ -6,6 +6,7 @@ description = "Redis / Valkey bridge binary for the stryke `redis` package."
 authors = ["MenkeTechnologies"]
 license = "MIT"
 repository = "https://github.com/MenkeTechnologies/stryke-redis"
+homepage = "https://menketechnologies.github.io/stryke-redis/"
 publish = false
 
 [[bin]]
