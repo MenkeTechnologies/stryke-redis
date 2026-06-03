@@ -143,7 +143,7 @@ redis --help</pre>
 
       <section class="tutorial-section">
         <h2>Why a package, not a builtin</h2>
-        <p><code>redis</code> Rust crate with the async/tokio path. Single highest-leverage daily-use connector after Postgres / MySQL.</p>
+        <p><code>redis</code> Rust crate (sync) with rustls TLS. Single highest-leverage daily-use connector after Postgres / MySQL.</p>
         <p>The stryke side is a thin NDJSON-pipe wrapper; the heavy code lives in the <code>stryke-redis-helper</code> sidecar binary and is loaded on demand. Core stryke is never linked against this package's deps.</p>
       </section>
 
