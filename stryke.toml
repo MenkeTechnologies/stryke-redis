@@ -1,15 +1,61 @@
 [package]
 name = "redis"
-version = "0.1.0"
-description = "Redis / Valkey client for stryke. KV, lists, sets, hashes, sorted-sets, pub/sub publish, scan, server admin. Single-shot per call."
+version = "0.2.0"
+description = "Redis / Valkey client for stryke. cdylib loaded in-process — persistent connection cache per (url, db, auth)."
 authors = ["MenkeTechnologies"]
 license = "MIT"
 repository = "https://github.com/MenkeTechnologies/stryke-redis"
 edition = "2026"
 
-[bin]
-redis = "bin/redis.stk"
-redis-build = "bin/redis-build.stk"
+[ffi]
+lib-name = "stryke_redis"
+namespace = "Redis"
+exports = [
+    "redis__version",
+    "redis__ping",
+    "redis__get",
+    "redis__set",
+    "redis__del",
+    "redis__exists",
+    "redis__expire",
+    "redis__ttl",
+    "redis__type",
+    "redis__incr",
+    "redis__decr",
+    "redis__mget",
+    "redis__mset",
+    "redis__keys",
+    "redis__scan",
+    "redis__lpush",
+    "redis__rpush",
+    "redis__lpop",
+    "redis__rpop",
+    "redis__lrange",
+    "redis__llen",
+    "redis__sadd",
+    "redis__srem",
+    "redis__smembers",
+    "redis__sismember",
+    "redis__scard",
+    "redis__hset",
+    "redis__hget",
+    "redis__hdel",
+    "redis__hgetall",
+    "redis__hkeys",
+    "redis__hvals",
+    "redis__hmget",
+    "redis__hmset",
+    "redis__zadd",
+    "redis__zrange",
+    "redis__zrem",
+    "redis__zcard",
+    "redis__zscore",
+    "redis__publish",
+    "redis__info",
+    "redis__dbsize",
+    "redis__flushdb",
+    "redis__raw",
+]
 
 [scripts]
 build = "cargo build --release"

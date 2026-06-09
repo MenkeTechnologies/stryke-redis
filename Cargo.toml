@@ -1,29 +1,28 @@
 [package]
-name = "stryke-redis-helper"
-version = "0.1.1"
+name = "stryke-redis"
+version = "0.2.0"
 edition = "2021"
-description = "Redis / Valkey bridge binary for the stryke `redis` package"
+description = "Redis / Valkey cdylib for the stryke `redis` package — dlopened in-process via stryke's FFI bridge."
 authors = ["MenkeTechnologies"]
 license = "MIT"
 repository = "https://github.com/MenkeTechnologies/stryke-redis"
 homepage = "https://menketechnologies.github.io/stryke-redis/"
 publish = false
 
-[[bin]]
-name = "stryke-redis-helper"
-path = "src/main.rs"
+[lib]
+name = "stryke_redis"
+crate-type = ["cdylib"]
+path = "src/lib.rs"
 
 [dependencies]
 redis = { version = "1", default-features = false, features = [
     "acl", "streams", "geospatial", "script", "num-bigint", "tls-rustls",
 ] }
-clap = { version = "4", default-features = false, features = [
-    "std", "derive", "help", "usage", "error-context", "env",
-] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 anyhow = "1"
-base64 = "0.22"
+once_cell = "1"
+parking_lot = "0.12"
 
 [profile.release]
 opt-level = 3

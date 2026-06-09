@@ -1,16 +1,17 @@
 # t/test_redis.stk — round-trip against a live Redis.
 #
 # Skips when:
-#   * helper isn't built
+#   * the cdylib isn't loaded (run `s pkg install -g .` first so stryke's
+#     FFI bridge dlopens lib/libstryke_redis.{dylib,so} on `use Redis`)
 #   * neither $REDIS_URL is set NOR 127.0.0.1:6379 is reachable
 #
 # Uses keys prefixed with `stryke:test:$$:` and cleans them up at exit.
 
-require "./lib/Redis.stk"
+use Redis
 
-my $have_helper = eval { Redis::helper_path(); 1 }
-unless ($have_helper) {
-    p "1..0 # SKIP helper not built — run `cargo build --release` first"
+my $have_cdylib = eval { Redis::version(); 1 }
+unless ($have_cdylib) {
+    p "1..0 # SKIP cdylib not loaded — run `s pkg install .` first"
     exit 0
 }
 

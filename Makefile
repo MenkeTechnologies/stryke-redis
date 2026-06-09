@@ -9,7 +9,7 @@ help:
 	  '  make release   - cargo build --release' \
 	  '  make debug     - cargo build' \
 	  '  make test      - cargo test then `s test t/`  (needs $$REDIS_URL or local 127.0.0.1:6379)' \
-	  '  make install   - `s pkg install -g .` (registers redis/redis-build CLI launchers)' \
+	  '  make install   - `s pkg install -g .` (cdylib lands in ~/.stryke/store/redis@<ver>/)' \
 	  '  make clean     - cargo clean'
 
 release:

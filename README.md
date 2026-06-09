@@ -28,9 +28,9 @@ pub/sub publish, scan, server admin. Opt-in package tier.
 - [\[0x00\] Why this is one of the most useful stryke packages](#0x00-why-this-is-one-of-the-most-useful-stryke-packages)
 - [\[0x01\] Install](#0x01-install)
 - [\[0x02\] Quick start](#0x02-quick-start)
-- [\[0x03\] CLI: `redis`](#0x03-cli-redis)
+- [\[0x03\] Connection options](#0x03-connection-options)
 - [\[0x04\] API reference (selected)](#0x04-api-reference-selected)
-- [\[0x05\] Helper protocol](#0x05-helper-protocol)
+- [\[0x05\] FFI layer](#0x05-ffi-layer)
 - [\[0x06\] Tests](#0x06-tests)
 - [\[0x07\] Dev workflow](#0x07-dev-workflow)
 - [\[0x08\] Layout](#0x08-layout)
@@ -54,6 +54,16 @@ Redis::set "rate-limit:user-42", "1", ex => 60, nx => 1
 
 ## [0x01] Install
 
+From a release (no rustc needed on the consumer machine — works from
+any directory, no project needed):
+
+```sh
+s pkg install -g github.com/MenkeTechnologies/stryke-redis
+```
+
+From a local checkout (publisher / contributor workflow — builds the
+cdylib via cargo, then installs into `~/.stryke/store/redis@<version>/`):
+
 ```sh
 cd ~/projects/stryke-redis
 cargo build --release
@@ -65,6 +75,10 @@ Or:
 ```sh
 make install
 ```
+
+`-g` installs globally with no project requirement. `s pkg install`
+without `-g` resolves the current project's `stryke.toml` deps and is
+unrelated to installing this package itself.
 
 ## [0x02] Quick start
 
@@ -129,59 +143,44 @@ Redis::get "foo", %prod
 
 Or compose from parts: `host`, `port`, `password`, `username`, `db`, `tls`.
 
-## [0x03] CLI: `redis`
+## [0x03] Connection options
+
+Every `Redis::*` op accepts `%opts` as its final argument. Connection
+fields the cdylib understands (matching the v1 helper-binary flags):
+
+```
+url       → redis://… or rediss://… (TLS)
+host      → 127.0.0.1
+port      → 6379
+db        → 0
+username  → ""
+password  → ""
+tls       → 1 / 0 — force TLS without redis:// → rediss:// rewrite
+```
+
+Inline:
+
+```stryke
+Redis::set "rate-limit:user-42", "1",
+    url => "rediss://prod:secret@host:6380/0", ex => 60, nx => 1
+```
+
+Or set once in the environment:
 
 ```sh
-redis ping
-redis set    foo bar --ex=60 --nx
-redis get    foo
-redis mset   a 1 b 2 c 3
-redis mget   a b c
-redis incr   counter --by=5
-redis del    a b c counter
-redis exists foo bar
-redis ttl    session:42
-
-redis lpush  events a b c
-redis lrange events 0 -1
-redis lpop   events --count=3
-
-redis sadd   tags rust stryke
-redis smembers tags
-
-redis hmset  user:42 name alice age 30
-redis hgetall user:42
-redis hmget  user:42 name age
-
-redis zadd   leaderboard 100 alice 200 bob
-redis zrange leaderboard 0 -1 --withscores --rev
-
-redis publish my-channel "hello"
-
-redis scan   --match='session:*' --count=100 --limit=1000
-redis keys   'session:*'          # ⚠️ blocking; use scan in prod
-redis type   foo
-
-redis info   memory
-redis dbsize
-redis flushdb --confirm
-redis raw    EVAL "return KEYS[1]" 1 hello       # arbitrary command
-
-redis build                                       # cargo build --release
-redis version
+export REDIS_URL=redis://localhost:6379/0
 ```
 
-Global flags (also via env vars):
+```stryke
+use Redis
+$ENV{REDIS_URL} = "redis://localhost:6379/0"
+my %conn = (url => $ENV{REDIS_URL})
+Redis::set "k", "v", %conn
+```
 
-```
--u, --url URL              $REDIS_URL          (redis://… or rediss://…)
--H, --host HOST            $REDIS_HOST
--P, --port PORT            $REDIS_PORT
--p, --password PW          $REDIS_PASSWORD
-    --username U           $REDIS_USERNAME
--D, --db N                 $REDIS_DB
-    --tls                  force TLS connection
-```
+The cdylib caches one `redis::Connection` per `(url, db, auth)` tuple
+for the life of the process — back-to-back calls with the same connection
+options reuse the same TCP socket. No handshake-per-call.
 
 ## [0x04] API reference (selected)
 
@@ -244,25 +243,24 @@ Redis::ping       %opts → 1 | ""
 Redis::raw        \@argv, %opts → \%resp          # arbitrary command
 ```
 
-## [0x05] Helper protocol
+## [0x05] FFI layer
 
-```sh
-stryke-redis-helper set foo bar --ex=60
-stryke-redis-helper mget a b c
-stryke-redis-helper -u rediss://prod:secret@host/0 zadd lb 100 alice 200 bob
-stryke-redis-helper scan --match='session:*' --count=100 --limit=1000
-stryke-redis-helper raw EVAL 'return KEYS[1]' 1 hello
-```
+Each `Redis::*` wrapper builds a JSON args dict and calls a sibling
+`redis__*` symbol resolved out of `libstryke_redis.{dylib,so}`. The
+cdylib is dlopened in-process on first `use Redis` (via stryke's
+`pkg::commands::try_load_ffi_for` resolver hook) and caches one
+`redis::Connection` per `(url, db, auth)` tuple in
+`OnceCell<Mutex<HashMap>>` for the life of the stryke process.
 
-Output:
+Wire shape:
 
 * Scalars → `{"value": …}`
-* Lists/sets/values → `{"values": [...]}` or `{"members": [...]}`
-* Hashes → JSON object directly
-* Zset rows with scores → `{"values": [{"member","score"}, …]}`
-* Streaming (scan, keys) → NDJSON `{"key": ...}` per line
+* Lists / sets / values → `{"values": [...]}` or `{"members": [...]}`
+* Hashes → `{"hash": {...}}`
+* Zset rows with scores → `{"pairs": [[member, score], ...]}`
+* Errors → `{"error": "<msg>"}` — the wrapper `die`s with it
 
-Binary values that aren't valid UTF-8 come back as `"base64:..."` strings.
+Set `STRYKE_REDIS_DEBUG=1` to log every call's request JSON to stderr.
 
 ## [0x06] Tests
 
@@ -296,12 +294,12 @@ make clean
 
 ```
 stryke-redis/
-  stryke.toml                      # stryke package manifest
-  Cargo.toml                       # Rust helper crate manifest
+  stryke.toml                      # stryke package manifest ([ffi] table)
+  Cargo.toml                       # cdylib crate manifest
   Makefile
-  src/main.rs                      # single-file helper binary
+  src/lib.rs                       # cdylib — redis__* extern "C" exports + persistent conn cache
   lib/
-    Redis.stk                      # `use Redis`
+    Redis.stk                      # `use Redis` — thin wrapper around the FFI symbols
   t/
     test_redis.stk                 # live round-trip test suite
   tests/

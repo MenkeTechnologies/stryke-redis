@@ -1,214 +1,117 @@
-# lib/Redis.stk — Redis / Valkey client for stryke.
+# lib/Redis.stk — Redis / Valkey client for stryke (`use Redis`).
 #
-# Wraps the `stryke-redis-helper` Rust binary (redis crate 1.x, sync).
-# Single-shot per call — fresh connection each invocation. For hot loops,
-# use multi-key commands (mget, mset, hmset, pipelines later) rather than
-# many separate calls.
+# Thin wrapper around the `stryke-redis` cdylib's `redis__*` exports. The
+# cdylib is dlopened in-process on first `use Redis` (see stryke's
+# `pkg/commands.rs::try_load_ffi_for`) and registers each export as a
+# stryke-callable function via `rust_ffi::load_cdylib`. Every wrapper here
+# builds a JSON args dict, calls the FFI symbol, and parses the JSON return.
 #
-# Connection options every public fn understands (hashref-internal to
-# work around the stryke %opts-reslurp quirk):
-#   url        redis://[user:pass@]host[:port]/[db]  ($REDIS_URL)
-#   host, port, password, username, db, tls          (compose into url)
+# Replaces the v1 helper-binary model (fork(2) + exec(2) + fresh TCP
+# connection per call). The cdylib caches one `redis::Connection` per
+# `(url, db, auth)` tuple in `OnceCell<Mutex<HashMap>>` for the life of the
+# stryke process — every `Redis::*` op now reuses the same connection
+# without paying handshake cost.
 
 package Redis
 
-our $HELPER
+# ── error dispatch ────────────────────────────────────────────────────
 
-fn Redis::pkg_root {
-    my @parts = split "/", __FILE__
-    pop @parts
-    pop @parts
-    my $root = join "/", @parts
-    $root ne "" ? $root : "."
-}
-
-fn Redis::helper_path {
-    return $Redis::HELPER if defined $Redis::HELPER && -x $Redis::HELPER
-
-    if (exists $ENV{STRYKE_REDIS_HELPER} && $ENV{STRYKE_REDIS_HELPER} ne "") {
-        my $p = $ENV{STRYKE_REDIS_HELPER}
-        die "stryke-redis: STRYKE_REDIS_HELPER=$p is not an executable file" unless -x $p
-        $Redis::HELPER = $p
-        return $p
+# Decode the JSON returned by a `redis__*` FFI call. Dies with a
+# descriptive message when the cdylib reported an error.
+fn Redis::_decode ($name, $json) {
+    my $o = from_json $json
+    if (ref $o eq "HASH" && exists $o->{error}) {
+        die "Redis::$name: $o->{error}"
     }
+    $o
+}
 
-    my $root = Redis::pkg_root()
-    for my $cand (
-        "$root/target/release/stryke-redis-helper",
-        "$root/target/debug/stryke-redis-helper",
-        "$root/bin/stryke-redis-helper",
-    ) {
-        if (-x $cand) {
-            $Redis::HELPER = $cand
-            return $cand
-        }
+# Build the request hash: connection params from %opts plus the per-op
+# fields the caller supplies. Filters out undef values so the cdylib
+# applies its own defaults. Falls back to $REDIS_URL when neither
+# `url` nor `host` is supplied — matches the v1 helper-binary ergonomics.
+fn Redis::_req ($extra, $opts) {
+    my %r = %$extra
+    for my $k (qw(url host port db username password tls)) {
+        $r{$k} = $opts->{$k} if exists $opts->{$k} && defined $opts->{$k}
     }
-
-    my $which = qx{command -v stryke-redis-helper 2>/dev/null}
-    chomp $which
-    if ($which ne "" && -x $which) {
-        $Redis::HELPER = $which
-        return $which
+    if (!exists $r{url} && !exists $r{host} && defined $ENV{REDIS_URL}) {
+        $r{url} = $ENV{REDIS_URL}
     }
-
-    die "stryke-redis: helper binary not found.\n" .
-        "  Build it once with:  cd $root && cargo build --release\n" .
-        "  Or set STRYKE_REDIS_HELPER=/path/to/stryke-redis-helper\n"
+    \%r
 }
 
-fn Redis::ensure_built {
-    my $root = Redis::pkg_root()
-    for my $cand ("$root/target/release/stryke-redis-helper",
-                  "$root/target/debug/stryke-redis-helper") {
-        return $cand if -x $cand
-    }
-    return Redis::helper_path() if exists $ENV{STRYKE_REDIS_HELPER}
-
-    p "stryke-redis: building helper (cargo build --release)..."
-    my $rc = system "cd " . Redis::_shq($root) . " && cargo build --release"
-    die "stryke-redis: cargo build failed (rc=$rc)" if $rc != 0
-    Redis::helper_path()
-}
-
-fn Redis::_shq ($s) {
-    my $t = $s
-    $t =~ s/'/'\\''/g
-    "'$t'"
-}
-
-fn Redis::_conn_argv ($o) {
-    my @argv = (Redis::_shq(Redis::helper_path()))
-    push @argv, "--url",      Redis::_shq($o->{url})      if defined $o->{url}
-    push @argv, "--host",     Redis::_shq($o->{host})     if defined $o->{host}
-    push @argv, "--port",     Redis::_shq($o->{port})     if defined $o->{port}
-    push @argv, "--password", Redis::_shq($o->{password}) if defined $o->{password}
-    push @argv, "--username", Redis::_shq($o->{username}) if defined $o->{username}
-    push @argv, "--db",       Redis::_shq($o->{db})       if defined $o->{db}
-    push @argv, "--tls" if $o->{tls}
-    @argv
-}
-
-fn Redis::_drain_ndjson ($fh) {
-    my @rows
-    while (my $line = <$fh>) {
-        chomp $line
-        next if $line eq ""
-        push @rows, from_json $line
-    }
-    @rows
-}
-
-fn Redis::_run_ndjson ($argv) {
-    my $cmd = join " ", @$argv
-    if ($ENV{STRYKE_REDIS_DEBUG}) {
-        warn "DEBUG redis cmd: $cmd\n"
-    }
-    open my $fh, "-|", $cmd or die "stryke-redis: spawn failed: $!"
-    my @rows = Redis::_drain_ndjson $fh
-    close $fh or die "stryke-redis: helper exited ($?)"
-    @rows
-}
-
-fn Redis::_run_json ($argv) {
-    my $cmd = join " ", @$argv
-    if ($ENV{STRYKE_REDIS_DEBUG}) {
-        warn "DEBUG redis cmd: $cmd\n"
-    }
-    my $out = qx{$cmd}
-    die "stryke-redis: helper exited ($?)" if $? != 0
-    from_json $out
-}
+# ── version + ping ───────────────────────────────────────────────────
 
 fn Redis::version {
-    my $bin = Redis::_shq(Redis::helper_path())
-    my $v = qx{$bin --version 2>&1}
-    chomp $v
-    $v
+    my $o = Redis::_decode("version", redis__version("{}"))
+    $o->{version}
 }
 
 fn Redis::ping (%opts) {
-    my @argv = Redis::_conn_argv(\%opts)
-    push @argv, "ping"
-    my $cmd = join " ", @argv
-    my $out = qx{$cmd 2>/dev/null}
-    $? == 0 && $out =~ /\"pong\"/
+    my $r = Redis::_req({}, \%opts)
+    my $o = Redis::_decode("ping", redis__ping(to_json($r)))
+    lc($o->{value} // "") eq "pong"
 }
 
-# ---------------------------------------------------------------------------
-# KV
-# ---------------------------------------------------------------------------
+# ── string KV ────────────────────────────────────────────────────────
 
 fn Redis::get ($key, %opts) {
-    my @argv = Redis::_conn_argv(\%opts)
-    push @argv, "get", Redis::_shq($key)
-    Redis::_run_json(\@argv)->{value}
+    my $r = Redis::_req({ key => $key }, \%opts)
+    Redis::_decode("get", redis__get(to_json($r)))->{value}
 }
 
 # %opts may also include: ex, px, nx, xx.
 fn Redis::set ($key, $value, %opts) {
-    my @argv = Redis::_conn_argv(\%opts)
-    push @argv, "set", Redis::_shq($key), Redis::_shq($value)
-    push @argv, "--ex", Redis::_shq($opts{ex}) if defined $opts{ex}
-    push @argv, "--px", Redis::_shq($opts{px}) if defined $opts{px}
-    push @argv, "--nx" if $opts{nx}
-    push @argv, "--xx" if $opts{xx}
-    Redis::_run_json(\@argv)->{ok}
+    my $r = Redis::_req(
+        { key => $key, value => $value, ex => $opts{ex}, px => $opts{px},
+          nx => ($opts{nx} ? \1 : \0), xx => ($opts{xx} ? \1 : \0) },
+        \%opts
+    )
+    Redis::_decode("set", redis__set(to_json($r)))->{ok}
 }
 
 fn Redis::del ($keys, %opts) {
-    my @list = ref($keys) eq "ARRAY" ? @{$keys} : ($keys)
-    my @argv = Redis::_conn_argv(\%opts)
-    push @argv, "del"
-    push @argv, Redis::_shq($_) for @list
-    Redis::_run_json(\@argv)->{value}
+    my $list = ref($keys) eq "ARRAY" ? $keys : [$keys]
+    my $r = Redis::_req({ keys => $list }, \%opts)
+    Redis::_decode("del", redis__del(to_json($r)))->{value}
 }
 
 fn Redis::exists ($keys, %opts) {
-    my @list = ref($keys) eq "ARRAY" ? @{$keys} : ($keys)
-    my @argv = Redis::_conn_argv(\%opts)
-    push @argv, "exists"
-    push @argv, Redis::_shq($_) for @list
-    Redis::_run_json(\@argv)->{value}
+    my $list = ref($keys) eq "ARRAY" ? $keys : [$keys]
+    my $r = Redis::_req({ keys => $list }, \%opts)
+    Redis::_decode("exists", redis__exists(to_json($r)))->{value}
 }
 
 fn Redis::expire ($key, $seconds, %opts) {
-    my @argv = Redis::_conn_argv(\%opts)
-    push @argv, "expire", Redis::_shq($key), Redis::_shq($seconds)
-    Redis::_run_json(\@argv)->{value}
+    my $r = Redis::_req({ key => $key, seconds => $seconds }, \%opts)
+    Redis::_decode("expire", redis__expire(to_json($r)))->{value}
 }
 
 fn Redis::ttl ($key, %opts) {
-    my @argv = Redis::_conn_argv(\%opts)
-    push @argv, "ttl", Redis::_shq($key)
-    Redis::_run_json(\@argv)->{value}
+    my $r = Redis::_req({ key => $key }, \%opts)
+    Redis::_decode("ttl", redis__ttl(to_json($r)))->{value}
 }
 
 fn Redis::type ($key, %opts) {
-    my @argv = Redis::_conn_argv(\%opts)
-    push @argv, "type", Redis::_shq($key)
-    Redis::_run_json(\@argv)->{type}
+    my $r = Redis::_req({ key => $key }, \%opts)
+    Redis::_decode("type", redis__type(to_json($r)))->{type}
 }
 
 fn Redis::incr ($key, %opts) {
-    my @argv = Redis::_conn_argv(\%opts)
-    push @argv, "incr", Redis::_shq($key)
-    push @argv, "--by", Redis::_shq($opts{by}) if defined $opts{by}
-    Redis::_run_json(\@argv)->{value}
+    my $r = Redis::_req({ key => $key, by => $opts{by} }, \%opts)
+    Redis::_decode("incr", redis__incr(to_json($r)))->{value}
 }
 
 fn Redis::decr ($key, %opts) {
-    my @argv = Redis::_conn_argv(\%opts)
-    push @argv, "decr", Redis::_shq($key)
-    push @argv, "--by", Redis::_shq($opts{by}) if defined $opts{by}
-    Redis::_run_json(\@argv)->{value}
+    my $r = Redis::_req({ key => $key, by => $opts{by} }, \%opts)
+    Redis::_decode("decr", redis__decr(to_json($r)))->{value}
 }
 
 fn Redis::mget ($keys, %opts) {
-    my @list = ref($keys) eq "ARRAY" ? @{$keys} : ($keys)
-    my @argv = Redis::_conn_argv(\%opts)
-    push @argv, "mget"
-    push @argv, Redis::_shq($_) for @list
-    @{ Redis::_run_json(\@argv)->{values} }
+    my $list = ref($keys) eq "ARRAY" ? $keys : [$keys]
+    my $r = Redis::_req({ keys => $list }, \%opts)
+    @{ Redis::_decode("mget", redis__mget(to_json($r)))->{values} }
 }
 
 # $pairs: { k1 => v1, k2 => v2 } OR [k1, v1, k2, v2]
@@ -223,165 +126,128 @@ fn Redis::mset ($pairs, %opts) {
     } else {
         die "Redis::mset: pass a hashref or arrayref of pairs"
     }
-    my @argv = Redis::_conn_argv(\%opts)
-    push @argv, "mset"
-    push @argv, Redis::_shq($_) for @flat
-    Redis::_run_json(\@argv)
+    my $r = Redis::_req({ pairs => \@flat }, \%opts)
+    Redis::_decode("mset", redis__mset(to_json($r)))->{ok}
 }
 
 fn Redis::keys ($pattern, %opts) {
-    my @argv = Redis::_conn_argv(\%opts)
-    push @argv, "keys", Redis::_shq($pattern)
-    map { $_->{key} } Redis::_run_ndjson(\@argv)
+    my $r = Redis::_req({ pattern => $pattern }, \%opts)
+    @{ Redis::_decode("keys", redis__keys(to_json($r)))->{keys} }
 }
 
 fn Redis::scan (%opts) {
-    my @argv = Redis::_conn_argv(\%opts)
-    push @argv, "scan"
-    push @argv, "--match", Redis::_shq($opts{match}) if defined $opts{match}
-    push @argv, "--count", Redis::_shq($opts{count}) if defined $opts{count}
-    push @argv, "--limit", Redis::_shq($opts{limit}) if defined $opts{limit}
-    map { $_->{key} } Redis::_run_ndjson(\@argv)
+    my $r = Redis::_req(
+        { match => $opts{match}, count => $opts{count}, limit => $opts{limit} },
+        \%opts
+    )
+    @{ Redis::_decode("scan", redis__scan(to_json($r)))->{keys} }
 }
 
-# ---------------------------------------------------------------------------
-# Lists
-# ---------------------------------------------------------------------------
+# ── lists ────────────────────────────────────────────────────────────
 
 fn Redis::lpush ($key, $values, %opts) {
-    my @list = ref($values) eq "ARRAY" ? @{$values} : ($values)
-    my @argv = Redis::_conn_argv(\%opts)
-    push @argv, "lpush", Redis::_shq($key)
-    push @argv, Redis::_shq($_) for @list
-    Redis::_run_json(\@argv)->{value}
+    my $list = ref($values) eq "ARRAY" ? $values : [$values]
+    my $r = Redis::_req({ key => $key, values => $list }, \%opts)
+    Redis::_decode("lpush", redis__lpush(to_json($r)))->{value}
 }
 
 fn Redis::rpush ($key, $values, %opts) {
-    my @list = ref($values) eq "ARRAY" ? @{$values} : ($values)
-    my @argv = Redis::_conn_argv(\%opts)
-    push @argv, "rpush", Redis::_shq($key)
-    push @argv, Redis::_shq($_) for @list
-    Redis::_run_json(\@argv)->{value}
+    my $list = ref($values) eq "ARRAY" ? $values : [$values]
+    my $r = Redis::_req({ key => $key, values => $list }, \%opts)
+    Redis::_decode("rpush", redis__rpush(to_json($r)))->{value}
 }
 
 fn Redis::lpop ($key, %opts) {
-    my @argv = Redis::_conn_argv(\%opts)
-    push @argv, "lpop", Redis::_shq($key)
-    push @argv, "--count", Redis::_shq($opts{count}) if defined $opts{count}
-    my $r = Redis::_run_json(\@argv)
-    defined $opts{count} ? @{ $r->{values} } : $r->{value}
+    my $r = Redis::_req({ key => $key, count => $opts{count} }, \%opts)
+    my $o = Redis::_decode("lpop", redis__lpop(to_json($r)))
+    defined $opts{count} ? @{ $o->{values} } : $o->{value}
 }
 
 fn Redis::rpop ($key, %opts) {
-    my @argv = Redis::_conn_argv(\%opts)
-    push @argv, "rpop", Redis::_shq($key)
-    push @argv, "--count", Redis::_shq($opts{count}) if defined $opts{count}
-    my $r = Redis::_run_json(\@argv)
-    defined $opts{count} ? @{ $r->{values} } : $r->{value}
+    my $r = Redis::_req({ key => $key, count => $opts{count} }, \%opts)
+    my $o = Redis::_decode("rpop", redis__rpop(to_json($r)))
+    defined $opts{count} ? @{ $o->{values} } : $o->{value}
 }
 
 fn Redis::lrange ($key, $start, $stop, %opts) {
-    my @argv = Redis::_conn_argv(\%opts)
-    push @argv, "lrange", Redis::_shq($key), Redis::_shq($start), Redis::_shq($stop)
-    @{ Redis::_run_json(\@argv)->{values} }
+    my $r = Redis::_req({ key => $key, start => $start, stop => $stop }, \%opts)
+    @{ Redis::_decode("lrange", redis__lrange(to_json($r)))->{values} }
 }
 
 fn Redis::llen ($key, %opts) {
-    my @argv = Redis::_conn_argv(\%opts)
-    push @argv, "llen", Redis::_shq($key)
-    Redis::_run_json(\@argv)->{value}
+    my $r = Redis::_req({ key => $key }, \%opts)
+    Redis::_decode("llen", redis__llen(to_json($r)))->{value}
 }
 
-# ---------------------------------------------------------------------------
-# Sets
-# ---------------------------------------------------------------------------
+# ── sets ─────────────────────────────────────────────────────────────
 
 fn Redis::sadd ($key, $members, %opts) {
-    my @list = ref($members) eq "ARRAY" ? @{$members} : ($members)
-    my @argv = Redis::_conn_argv(\%opts)
-    push @argv, "sadd", Redis::_shq($key)
-    push @argv, Redis::_shq($_) for @list
-    Redis::_run_json(\@argv)->{value}
+    my $list = ref($members) eq "ARRAY" ? $members : [$members]
+    my $r = Redis::_req({ key => $key, members => $list }, \%opts)
+    Redis::_decode("sadd", redis__sadd(to_json($r)))->{value}
 }
 
 fn Redis::srem ($key, $members, %opts) {
-    my @list = ref($members) eq "ARRAY" ? @{$members} : ($members)
-    my @argv = Redis::_conn_argv(\%opts)
-    push @argv, "srem", Redis::_shq($key)
-    push @argv, Redis::_shq($_) for @list
-    Redis::_run_json(\@argv)->{value}
+    my $list = ref($members) eq "ARRAY" ? $members : [$members]
+    my $r = Redis::_req({ key => $key, members => $list }, \%opts)
+    Redis::_decode("srem", redis__srem(to_json($r)))->{value}
 }
 
 fn Redis::smembers ($key, %opts) {
-    my @argv = Redis::_conn_argv(\%opts)
-    push @argv, "smembers", Redis::_shq($key)
-    @{ Redis::_run_json(\@argv)->{members} }
+    my $r = Redis::_req({ key => $key }, \%opts)
+    @{ Redis::_decode("smembers", redis__smembers(to_json($r)))->{members} }
 }
 
 fn Redis::sismember ($key, $m, %opts) {
-    my @argv = Redis::_conn_argv(\%opts)
-    push @argv, "sismember", Redis::_shq($key), Redis::_shq($m)
-    Redis::_run_json(\@argv)->{value}
+    my $r = Redis::_req({ key => $key, member => $m }, \%opts)
+    Redis::_decode("sismember", redis__sismember(to_json($r)))->{value} ? 1 : 0
 }
 
 fn Redis::scard ($key, %opts) {
-    my @argv = Redis::_conn_argv(\%opts)
-    push @argv, "scard", Redis::_shq($key)
-    Redis::_run_json(\@argv)->{value}
+    my $r = Redis::_req({ key => $key }, \%opts)
+    Redis::_decode("scard", redis__scard(to_json($r)))->{value}
 }
 
-# ---------------------------------------------------------------------------
-# Hashes
-# ---------------------------------------------------------------------------
+# ── hashes ───────────────────────────────────────────────────────────
 
 fn Redis::hset ($key, $field, $value, %opts) {
-    my @argv = Redis::_conn_argv(\%opts)
-    push @argv, "hset", Redis::_shq($key), Redis::_shq($field), Redis::_shq($value)
-    Redis::_run_json(\@argv)->{value}
+    my $r = Redis::_req({ key => $key, field => $field, value => $value }, \%opts)
+    Redis::_decode("hset", redis__hset(to_json($r)))->{value}
 }
 
 fn Redis::hget ($key, $field, %opts) {
-    my @argv = Redis::_conn_argv(\%opts)
-    push @argv, "hget", Redis::_shq($key), Redis::_shq($field)
-    Redis::_run_json(\@argv)->{value}
+    my $r = Redis::_req({ key => $key, field => $field }, \%opts)
+    Redis::_decode("hget", redis__hget(to_json($r)))->{value}
 }
 
 fn Redis::hdel ($key, $fields, %opts) {
-    my @list = ref($fields) eq "ARRAY" ? @{$fields} : ($fields)
-    my @argv = Redis::_conn_argv(\%opts)
-    push @argv, "hdel", Redis::_shq($key)
-    push @argv, Redis::_shq($_) for @list
-    Redis::_run_json(\@argv)->{value}
+    my $list = ref($fields) eq "ARRAY" ? $fields : [$fields]
+    my $r = Redis::_req({ key => $key, fields => $list }, \%opts)
+    Redis::_decode("hdel", redis__hdel(to_json($r)))->{value}
 }
 
-# Returns a hashref { field => value, … }.
 fn Redis::hgetall ($key, %opts) {
-    my @argv = Redis::_conn_argv(\%opts)
-    push @argv, "hgetall", Redis::_shq($key)
-    Redis::_run_json(\@argv)
+    my $r = Redis::_req({ key => $key }, \%opts)
+    %{ Redis::_decode("hgetall", redis__hgetall(to_json($r)))->{hash} }
 }
 
 fn Redis::hkeys ($key, %opts) {
-    my @argv = Redis::_conn_argv(\%opts)
-    push @argv, "hkeys", Redis::_shq($key)
-    @{ Redis::_run_json(\@argv)->{keys} }
+    my $r = Redis::_req({ key => $key }, \%opts)
+    @{ Redis::_decode("hkeys", redis__hkeys(to_json($r)))->{keys} }
 }
 
 fn Redis::hvals ($key, %opts) {
-    my @argv = Redis::_conn_argv(\%opts)
-    push @argv, "hvals", Redis::_shq($key)
-    @{ Redis::_run_json(\@argv)->{values} }
+    my $r = Redis::_req({ key => $key }, \%opts)
+    @{ Redis::_decode("hvals", redis__hvals(to_json($r)))->{values} }
 }
 
 fn Redis::hmget ($key, $fields, %opts) {
-    my @list = ref($fields) eq "ARRAY" ? @{$fields} : ($fields)
-    my @argv = Redis::_conn_argv(\%opts)
-    push @argv, "hmget", Redis::_shq($key)
-    push @argv, Redis::_shq($_) for @list
-    @{ Redis::_run_json(\@argv)->{values} }
+    my $list = ref($fields) eq "ARRAY" ? $fields : [$fields]
+    my $r = Redis::_req({ key => $key, fields => $list }, \%opts)
+    @{ Redis::_decode("hmget", redis__hmget(to_json($r)))->{values} }
 }
 
-# $pairs: { field => value, … } OR [field, value, …]
+# $pairs: { f1 => v1, f2 => v2 } OR [f1, v1, f2, v2]
 fn Redis::hmset ($key, $pairs, %opts) {
     my @flat
     if (ref($pairs) eq "HASH") {
@@ -391,103 +257,78 @@ fn Redis::hmset ($key, $pairs, %opts) {
     } elsif (ref($pairs) eq "ARRAY") {
         @flat = @$pairs
     } else {
-        die "Redis::hmset: pass a hashref or arrayref of field/value pairs"
+        die "Redis::hmset: pass a hashref or arrayref of pairs"
     }
-    my @argv = Redis::_conn_argv(\%opts)
-    push @argv, "hmset", Redis::_shq($key)
-    push @argv, Redis::_shq($_) for @flat
-    Redis::_run_json(\@argv)
+    my $r = Redis::_req({ key => $key, pairs => \@flat }, \%opts)
+    Redis::_decode("hmset", redis__hmset(to_json($r)))->{ok}
 }
 
-# ---------------------------------------------------------------------------
-# Sorted sets
-# ---------------------------------------------------------------------------
+# ── sorted sets ──────────────────────────────────────────────────────
 
-# $pairs: { member => score, … } OR [score, member, score, member, …]
+# $pairs: [score, member, score, member, ...]
 fn Redis::zadd ($key, $pairs, %opts) {
-    my @flat
-    if (ref($pairs) eq "HASH") {
-        for my $m (keys %$pairs) {
-            push @flat, $pairs->{$m}, $m
-        }
-    } elsif (ref($pairs) eq "ARRAY") {
-        @flat = @$pairs
-    } else {
-        die "Redis::zadd: pass a hashref { member => score } or arrayref [score, member, …]"
-    }
-    my @argv = Redis::_conn_argv(\%opts)
-    push @argv, "zadd", Redis::_shq($key)
-    push @argv, Redis::_shq($_) for @flat
-    Redis::_run_json(\@argv)->{value}
+    die "Redis::zadd: pairs must be arrayref" unless ref($pairs) eq "ARRAY"
+    my $r = Redis::_req({ key => $key, pairs => $pairs }, \%opts)
+    Redis::_decode("zadd", redis__zadd(to_json($r)))->{value}
 }
 
-# With `withscores => 1`, returns array of { member, score } hashrefs.
 fn Redis::zrange ($key, $start, $stop, %opts) {
-    my @argv = Redis::_conn_argv(\%opts)
-    push @argv, "zrange", Redis::_shq($key), Redis::_shq($start), Redis::_shq($stop)
-    push @argv, "--withscores" if $opts{withscores}
-    push @argv, "--rev"        if $opts{rev}
-    @{ Redis::_run_json(\@argv)->{values} }
+    my $r = Redis::_req(
+        { key => $key, start => $start, stop => $stop,
+          with_scores => ($opts{with_scores} ? \1 : \0),
+          rev => ($opts{rev} ? \1 : \0) },
+        \%opts
+    )
+    my $o = Redis::_decode("zrange", redis__zrange(to_json($r)))
+    $opts{with_scores} ? @{ $o->{pairs} } : @{ $o->{values} }
 }
 
 fn Redis::zrem ($key, $members, %opts) {
-    my @list = ref($members) eq "ARRAY" ? @{$members} : ($members)
-    my @argv = Redis::_conn_argv(\%opts)
-    push @argv, "zrem", Redis::_shq($key)
-    push @argv, Redis::_shq($_) for @list
-    Redis::_run_json(\@argv)->{value}
+    my $list = ref($members) eq "ARRAY" ? $members : [$members]
+    my $r = Redis::_req({ key => $key, members => $list }, \%opts)
+    Redis::_decode("zrem", redis__zrem(to_json($r)))->{value}
 }
 
 fn Redis::zcard ($key, %opts) {
-    my @argv = Redis::_conn_argv(\%opts)
-    push @argv, "zcard", Redis::_shq($key)
-    Redis::_run_json(\@argv)->{value}
+    my $r = Redis::_req({ key => $key }, \%opts)
+    Redis::_decode("zcard", redis__zcard(to_json($r)))->{value}
 }
 
 fn Redis::zscore ($key, $member, %opts) {
-    my @argv = Redis::_conn_argv(\%opts)
-    push @argv, "zscore", Redis::_shq($key), Redis::_shq($member)
-    Redis::_run_json(\@argv)->{score}
+    my $r = Redis::_req({ key => $key, member => $member }, \%opts)
+    Redis::_decode("zscore", redis__zscore(to_json($r)))->{value}
 }
 
-# ---------------------------------------------------------------------------
-# Pub/sub + server
-# ---------------------------------------------------------------------------
+# ── pub/sub publish ──────────────────────────────────────────────────
 
 fn Redis::publish ($channel, $message, %opts) {
-    my @argv = Redis::_conn_argv(\%opts)
-    push @argv, "publish", Redis::_shq($channel), Redis::_shq($message)
-    Redis::_run_json(\@argv)->{value}
+    my $r = Redis::_req({ channel => $channel, message => $message }, \%opts)
+    Redis::_decode("publish", redis__publish(to_json($r)))->{value}
 }
 
+# ── server admin ─────────────────────────────────────────────────────
+
 fn Redis::info (%opts) {
-    my @argv = Redis::_conn_argv(\%opts)
-    push @argv, "info"
-    push @argv, Redis::_shq($opts{section}) if defined $opts{section}
-    Redis::_run_json(\@argv)
+    my $r = Redis::_req({ section => $opts{section} }, \%opts)
+    Redis::_decode("info", redis__info(to_json($r)))->{info}
 }
 
 fn Redis::dbsize (%opts) {
-    my @argv = Redis::_conn_argv(\%opts)
-    push @argv, "dbsize"
-    Redis::_run_json(\@argv)->{value}
+    my $r = Redis::_req({}, \%opts)
+    Redis::_decode("dbsize", redis__dbsize(to_json($r)))->{value}
 }
 
 fn Redis::flushdb (%opts) {
-    die "Redis::flushdb: pass confirm => 1 to actually flush" unless $opts{confirm}
-    my @argv = Redis::_conn_argv(\%opts)
-    push @argv, "flushdb", "--confirm"
-    Redis::_run_json(\@argv)
+    my $r = Redis::_req({ asynchronous => ($opts{async} ? \1 : \0) }, \%opts)
+    Redis::_decode("flushdb", redis__flushdb(to_json($r)))->{ok}
 }
 
-# Run an arbitrary Redis command. $argv is an arrayref starting with the
-# command name (e.g. ["XADD", "stream", "*", "k", "v"]).
+# ── raw command escape hatch ─────────────────────────────────────────
+
 fn Redis::raw ($argv_in, %opts) {
-    die "Redis::raw: argv must be an arrayref" unless ref($argv_in) eq "ARRAY"
-    my @argv = Redis::_conn_argv(\%opts)
-    push @argv, "raw"
-    push @argv, Redis::_shq($_) for @$argv_in
-    Redis::_run_json(\@argv)
+    my $argv = ref($argv_in) eq "ARRAY" ? $argv_in : [$argv_in]
+    my $r = Redis::_req({ argv => $argv }, \%opts)
+    Redis::_decode("raw", redis__raw(to_json($r)))->{value}
 }
 
 1
