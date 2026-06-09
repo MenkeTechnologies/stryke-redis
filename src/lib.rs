@@ -171,9 +171,7 @@ pub unsafe extern "C" fn stryke_free_cstring(p: *mut c_char) {
 
 #[no_mangle]
 pub extern "C" fn redis__version(args: *const c_char) -> *const c_char {
-    ffi_call(args, |_| {
-        Ok(json!({"version": env!("CARGO_PKG_VERSION")}))
-    })
+    ffi_call(args, |_| Ok(json!({"version": env!("CARGO_PKG_VERSION")})))
 }
 
 #[no_mangle]
@@ -203,7 +201,9 @@ pub extern "C" fn redis__get(args: *const c_char) -> *const c_char {
 pub extern "C" fn redis__set(args: *const c_char) -> *const c_char {
     ffi_call(args, |v| {
         let key = v["key"].as_str().ok_or_else(|| anyhow!("missing key"))?;
-        let value = v["value"].as_str().ok_or_else(|| anyhow!("missing value"))?;
+        let value = v["value"]
+            .as_str()
+            .ok_or_else(|| anyhow!("missing value"))?;
         let ex = v["ex"].as_i64();
         let px = v["px"].as_i64();
         let nx = v["nx"].as_bool().unwrap_or(false);
@@ -255,7 +255,9 @@ pub extern "C" fn redis__exists(args: *const c_char) -> *const c_char {
 pub extern "C" fn redis__expire(args: *const c_char) -> *const c_char {
     ffi_call(args, |v| {
         let key = v["key"].as_str().ok_or_else(|| anyhow!("missing key"))?;
-        let secs = v["seconds"].as_i64().ok_or_else(|| anyhow!("missing seconds"))?;
+        let secs = v["seconds"]
+            .as_i64()
+            .ok_or_else(|| anyhow!("missing seconds"))?;
         with_conn(&v, |c| {
             let n: i64 = redis::cmd("EXPIRE").arg(key).arg(secs).query(c)?;
             Ok(json!({"value": n}))
@@ -453,7 +455,9 @@ pub extern "C" fn redis__rpop(args: *const c_char) -> *const c_char {
 pub extern "C" fn redis__lrange(args: *const c_char) -> *const c_char {
     ffi_call(args, |v| {
         let key = v["key"].as_str().ok_or_else(|| anyhow!("missing key"))?;
-        let start = v["start"].as_i64().ok_or_else(|| anyhow!("missing start"))?;
+        let start = v["start"]
+            .as_i64()
+            .ok_or_else(|| anyhow!("missing start"))?;
         let stop = v["stop"].as_i64().ok_or_else(|| anyhow!("missing stop"))?;
         with_conn(&v, |c| {
             let vals: Vec<String> = redis::cmd("LRANGE")
@@ -518,7 +522,9 @@ pub extern "C" fn redis__smembers(args: *const c_char) -> *const c_char {
 pub extern "C" fn redis__sismember(args: *const c_char) -> *const c_char {
     ffi_call(args, |v| {
         let key = v["key"].as_str().ok_or_else(|| anyhow!("missing key"))?;
-        let m = v["member"].as_str().ok_or_else(|| anyhow!("missing member"))?;
+        let m = v["member"]
+            .as_str()
+            .ok_or_else(|| anyhow!("missing member"))?;
         with_conn(&v, |c| {
             let n: i64 = redis::cmd("SISMEMBER").arg(key).arg(m).query(c)?;
             Ok(json!({"value": n != 0}))
@@ -543,8 +549,12 @@ pub extern "C" fn redis__scard(args: *const c_char) -> *const c_char {
 pub extern "C" fn redis__hset(args: *const c_char) -> *const c_char {
     ffi_call(args, |v| {
         let key = v["key"].as_str().ok_or_else(|| anyhow!("missing key"))?;
-        let field = v["field"].as_str().ok_or_else(|| anyhow!("missing field"))?;
-        let value = v["value"].as_str().ok_or_else(|| anyhow!("missing value"))?;
+        let field = v["field"]
+            .as_str()
+            .ok_or_else(|| anyhow!("missing field"))?;
+        let value = v["value"]
+            .as_str()
+            .ok_or_else(|| anyhow!("missing value"))?;
         with_conn(&v, |c| {
             let n: i64 = redis::cmd("HSET").arg(key).arg(field).arg(value).query(c)?;
             Ok(json!({"value": n}))
@@ -556,7 +566,9 @@ pub extern "C" fn redis__hset(args: *const c_char) -> *const c_char {
 pub extern "C" fn redis__hget(args: *const c_char) -> *const c_char {
     ffi_call(args, |v| {
         let key = v["key"].as_str().ok_or_else(|| anyhow!("missing key"))?;
-        let field = v["field"].as_str().ok_or_else(|| anyhow!("missing field"))?;
+        let field = v["field"]
+            .as_str()
+            .ok_or_else(|| anyhow!("missing field"))?;
         with_conn(&v, |c| {
             let val: Option<String> = redis::cmd("HGET").arg(key).arg(field).query(c)?;
             Ok(json!({"value": val}))
@@ -651,7 +663,9 @@ pub extern "C" fn redis__zadd(args: *const c_char) -> *const c_char {
             .as_array()
             .ok_or_else(|| anyhow!("missing pairs"))?;
         if arr.len() % 2 != 0 {
-            return Err(anyhow!("zadd pairs must be even-length (score, member, ...)"));
+            return Err(anyhow!(
+                "zadd pairs must be even-length (score, member, ...)"
+            ));
         }
         with_conn(&v, |c| {
             let mut cmd = redis::cmd("ZADD");
@@ -676,7 +690,9 @@ pub extern "C" fn redis__zadd(args: *const c_char) -> *const c_char {
 pub extern "C" fn redis__zrange(args: *const c_char) -> *const c_char {
     ffi_call(args, |v| {
         let key = v["key"].as_str().ok_or_else(|| anyhow!("missing key"))?;
-        let start = v["start"].as_i64().ok_or_else(|| anyhow!("missing start"))?;
+        let start = v["start"]
+            .as_i64()
+            .ok_or_else(|| anyhow!("missing start"))?;
         let stop = v["stop"].as_i64().ok_or_else(|| anyhow!("missing stop"))?;
         let with_scores = v["with_scores"].as_bool().unwrap_or(false);
         let rev = v["rev"].as_bool().unwrap_or(false);
@@ -722,7 +738,9 @@ pub extern "C" fn redis__zcard(args: *const c_char) -> *const c_char {
 pub extern "C" fn redis__zscore(args: *const c_char) -> *const c_char {
     ffi_call(args, |v| {
         let key = v["key"].as_str().ok_or_else(|| anyhow!("missing key"))?;
-        let member = v["member"].as_str().ok_or_else(|| anyhow!("missing member"))?;
+        let member = v["member"]
+            .as_str()
+            .ok_or_else(|| anyhow!("missing member"))?;
         with_conn(&v, |c| {
             let s: Option<f64> = redis::cmd("ZSCORE").arg(key).arg(member).query(c)?;
             Ok(json!({"value": s}))
@@ -735,8 +753,12 @@ pub extern "C" fn redis__zscore(args: *const c_char) -> *const c_char {
 #[no_mangle]
 pub extern "C" fn redis__publish(args: *const c_char) -> *const c_char {
     ffi_call(args, |v| {
-        let channel = v["channel"].as_str().ok_or_else(|| anyhow!("missing channel"))?;
-        let message = v["message"].as_str().ok_or_else(|| anyhow!("missing message"))?;
+        let channel = v["channel"]
+            .as_str()
+            .ok_or_else(|| anyhow!("missing channel"))?;
+        let message = v["message"]
+            .as_str()
+            .ok_or_else(|| anyhow!("missing message"))?;
         with_conn(&v, |c| {
             let n: i64 = redis::cmd("PUBLISH").arg(channel).arg(message).query(c)?;
             Ok(json!({"value": n}))
@@ -813,7 +835,11 @@ fn string_vec(v: &Value) -> Result<Vec<String>> {
     match v {
         Value::Array(a) => a
             .iter()
-            .map(|x| x.as_str().map(String::from).ok_or_else(|| anyhow!("non-string in array")))
+            .map(|x| {
+                x.as_str()
+                    .map(String::from)
+                    .ok_or_else(|| anyhow!("non-string in array"))
+            })
             .collect(),
         Value::String(s) => Ok(vec![s.clone()]),
         Value::Null => Ok(Vec::new()),
@@ -832,7 +858,9 @@ fn redis_value_to_json(v: redis::Value) -> Value {
         },
         redis::Value::SimpleString(s) => Value::String(s),
         redis::Value::Okay => Value::String("OK".to_string()),
-        redis::Value::Array(arr) => Value::Array(arr.into_iter().map(redis_value_to_json).collect()),
+        redis::Value::Array(arr) => {
+            Value::Array(arr.into_iter().map(redis_value_to_json).collect())
+        }
         redis::Value::Map(pairs) => {
             let m: serde_json::Map<String, Value> = pairs
                 .into_iter()
