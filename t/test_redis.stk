@@ -17,7 +17,7 @@ assert_ok $version, "Redis::version returns truthy (cdylib loaded)"
 # ── liveness probe ──────────────────────────────────────────────────
 var %conn
 $conn{url} = $ENV{REDIS_URL} if defined $ENV{REDIS_URL}
-val $alive = Redis::ping(%conn)
+val $alive = eval { Redis::ping(%conn) }
 
 if ($alive) {
     val $pfx = "stryke:test:$$"
