@@ -371,4 +371,3 @@ fn Redis::raw ($argv_in, %opts) {
     Redis::_decode("raw", redis__raw(to_json($r)))->{value}
 }
 
-1
