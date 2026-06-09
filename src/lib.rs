@@ -880,3 +880,163 @@ fn redis_value_to_json(v: redis::Value) -> Value {
         other => Value::String(format!("{:?}", other)),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── url_from_opts / ConnKey ──
+
+    #[test]
+    fn url_explicit_url_field_kept_verbatim() {
+        let k = url_from_opts(&json!({"url": "redis://h:6380/2"}));
+        assert_eq!(k.url, "redis://h:6380/2");
+    }
+
+    #[test]
+    fn url_default_built_with_redis_scheme() {
+        let k = url_from_opts(&json!({}));
+        assert_eq!(k.url, "redis://127.0.0.1:6379/0");
+        assert!(!k.tls);
+    }
+
+    #[test]
+    fn url_tls_picks_rediss_scheme() {
+        let k = url_from_opts(&json!({"tls": true}));
+        assert!(k.url.starts_with("rediss://"), "{}", k.url);
+        assert!(k.tls);
+    }
+
+    #[test]
+    fn url_password_only_uses_colon_prefix() {
+        // Redis ACL: `:password@host` means default-user auth.
+        let k = url_from_opts(&json!({"password": "hunter2"}));
+        assert!(k.url.contains(":hunter2@"), "{}", k.url);
+        assert!(!k.url.contains("@:"), "{}", k.url);
+    }
+
+    #[test]
+    fn url_username_and_password() {
+        let k = url_from_opts(&json!({"username": "ada", "password": "hunter2"}));
+        assert!(k.url.contains("ada:hunter2@"), "{}", k.url);
+    }
+
+    #[test]
+    fn url_no_auth_segment_when_both_blank() {
+        let k = url_from_opts(&json!({}));
+        assert!(!k.url.contains('@'), "{}", k.url);
+    }
+
+    #[test]
+    fn url_host_port_db_overrides() {
+        let k = url_from_opts(&json!({"host": "h.example", "port": 16379, "db": 7}));
+        assert_eq!(k.url, "redis://h.example:16379/7");
+        assert_eq!(k.db, 7);
+    }
+
+    #[test]
+    fn conn_key_eq_distinguishes_db() {
+        let a = url_from_opts(&json!({"db": 0}));
+        let b = url_from_opts(&json!({"db": 1}));
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn conn_key_eq_distinguishes_credentials() {
+        let a = url_from_opts(&json!({"password": "x"}));
+        let b = url_from_opts(&json!({"password": "y"}));
+        assert_ne!(a, b);
+    }
+
+    // ── string_vec ──
+
+    #[test]
+    fn sv_array_of_strings() {
+        let v = json!(["a", "b", "c"]);
+        assert_eq!(string_vec(&v).unwrap(), vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn sv_single_string_wraps_in_singleton_vec() {
+        let v = json!("only");
+        assert_eq!(string_vec(&v).unwrap(), vec!["only"]);
+    }
+
+    #[test]
+    fn sv_null_yields_empty_vec() {
+        assert!(string_vec(&Value::Null).unwrap().is_empty());
+    }
+
+    #[test]
+    fn sv_array_with_non_string_errors() {
+        let v = json!(["a", 42, "c"]);
+        let err = string_vec(&v).unwrap_err().to_string();
+        assert!(err.contains("non-string"), "{err}");
+    }
+
+    #[test]
+    fn sv_number_or_bool_errors() {
+        assert!(string_vec(&json!(42)).is_err());
+        assert!(string_vec(&json!(true)).is_err());
+        assert!(string_vec(&json!({"k":"v"})).is_err());
+    }
+
+    // ── redis_value_to_json ──
+
+    #[test]
+    fn rv2j_nil() {
+        assert_eq!(redis_value_to_json(redis::Value::Nil), Value::Null);
+    }
+
+    #[test]
+    fn rv2j_int() {
+        assert_eq!(redis_value_to_json(redis::Value::Int(42)), json!(42));
+        assert_eq!(redis_value_to_json(redis::Value::Int(-7)), json!(-7));
+    }
+
+    #[test]
+    fn rv2j_bulk_utf8_string() {
+        let v = redis_value_to_json(redis::Value::BulkString(b"hello".to_vec()));
+        assert_eq!(v, json!("hello"));
+    }
+
+    #[test]
+    fn rv2j_bulk_non_utf8_marker() {
+        let v = redis_value_to_json(redis::Value::BulkString(vec![0xFF, 0xFE, 0xFD]));
+        assert_eq!(v, json!("<binary 3 bytes>"));
+    }
+
+    #[test]
+    fn rv2j_simple_string_and_okay() {
+        assert_eq!(
+            redis_value_to_json(redis::Value::SimpleString("PONG".into())),
+            json!("PONG")
+        );
+        assert_eq!(redis_value_to_json(redis::Value::Okay), json!("OK"));
+    }
+
+    #[test]
+    fn rv2j_array_recurses() {
+        let v = redis_value_to_json(redis::Value::Array(vec![
+            redis::Value::Int(1),
+            redis::Value::BulkString(b"two".to_vec()),
+        ]));
+        assert_eq!(v, json!([1, "two"]));
+    }
+
+    #[test]
+    fn rv2j_map_string_keys() {
+        let v = redis_value_to_json(redis::Value::Map(vec![
+            (
+                redis::Value::SimpleString("k1".into()),
+                redis::Value::Int(1),
+            ),
+            (
+                redis::Value::BulkString(b"k2".to_vec()),
+                redis::Value::BulkString(b"v2".to_vec()),
+            ),
+        ]));
+        assert_eq!(v["k1"], json!(1));
+        assert_eq!(v["k2"], json!("v2"));
+    }
+}
