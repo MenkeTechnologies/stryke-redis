@@ -1,23 +1,23 @@
-# lib/Redis.stk — Redis / Valkey client for stryke (`use Redis`).
-#
-# Thin wrapper around the `stryke-redis` cdylib's `redis__*` exports. The
-# cdylib is dlopened in-process on first `use Redis` (see stryke's
-# `pkg/commands.rs::try_load_ffi_for`) and registers each export as a
-# stryke-callable function via `rust_ffi::load_cdylib`. Every wrapper here
-# builds a JSON args dict, calls the FFI symbol, and parses the JSON return.
-#
-# Replaces the v1 helper-binary model (fork(2) + exec(2) + fresh TCP
-# connection per call). The cdylib caches one `redis::Connection` per
-# `(url, db, auth)` tuple in `OnceCell<Mutex<HashMap>>` for the life of the
-# stryke process — every `Redis::*` op now reuses the same connection
-# without paying handshake cost.
+## lib/Redis.stk — Redis / Valkey client for stryke (`use Redis`).
+##
+## Thin wrapper around the `stryke-redis` cdylib's `redis__*` exports. The
+## cdylib is dlopened in-process on first `use Redis` (see stryke's
+## `pkg/commands.rs::try_load_ffi_for`) and registers each export as a
+## stryke-callable function via `rust_ffi::load_cdylib`. Every wrapper here
+## builds a JSON args dict, calls the FFI symbol, and parses the JSON return.
+##
+## Replaces the v1 helper-binary model (fork(2) + exec(2) + fresh TCP
+## connection per call). The cdylib caches one `redis::Connection` per
+## `(url, db, auth)` tuple in `OnceCell<Mutex<HashMap>>` for the life of the
+## stryke process — every `Redis::*` op now reuses the same connection
+## without paying handshake cost.
 
 package Redis
 
 # ── error dispatch ────────────────────────────────────────────────────
 
-# Decode the JSON returned by a `redis__*` FFI call. Dies with a
-# descriptive message when the cdylib reported an error.
+## Decode the JSON returned by a `redis__*` FFI call. Dies with a
+## descriptive message when the cdylib reported an error.
 fn Redis::_decode ($name, $json) {
     my $o = from_json $json
     if (ref $o eq "HASH" && exists $o->{error}) {
@@ -26,10 +26,10 @@ fn Redis::_decode ($name, $json) {
     $o
 }
 
-# Build the request hash: connection params from %opts plus the per-op
-# fields the caller supplies. Filters out undef values so the cdylib
-# applies its own defaults. Falls back to $REDIS_URL when neither
-# `url` nor `host` is supplied — matches the v1 helper-binary ergonomics.
+## Build the request hash: connection params from %opts plus the per-op
+## fields the caller supplies. Filters out undef values so the cdylib
+## applies its own defaults. Falls back to $REDIS_URL when neither
+## `url` nor `host` is supplied — matches the v1 helper-binary ergonomics.
 fn Redis::_req ($extra, $opts) {
     my %r = %$extra
     for my $k (qw(url host port db username password tls)) {
@@ -61,7 +61,7 @@ fn Redis::get ($key, %opts) {
     Redis::_decode("get", redis__get(to_json($r)))->{value}
 }
 
-# %opts may also include: ex, px, nx, xx.
+## %opts may also include: ex, px, nx, xx.
 fn Redis::set ($key, $value, %opts) {
     my $r = Redis::_req(
         { key => $key, value => $value, ex => $opts{ex}, px => $opts{px},
@@ -114,7 +114,7 @@ fn Redis::mget ($keys, %opts) {
     @{ Redis::_decode("mget", redis__mget(to_json($r)))->{values} }
 }
 
-# $pairs: { k1 => v1, k2 => v2 } OR [k1, v1, k2, v2]
+## $pairs: { k1 => v1, k2 => v2 } OR [k1, v1, k2, v2]
 fn Redis::mset ($pairs, %opts) {
     my @flat
     if (ref($pairs) eq "HASH") {
@@ -247,7 +247,7 @@ fn Redis::hmget ($key, $fields, %opts) {
     @{ Redis::_decode("hmget", redis__hmget(to_json($r)))->{values} }
 }
 
-# $pairs: { f1 => v1, f2 => v2 } OR [f1, v1, f2, v2]
+## $pairs: { f1 => v1, f2 => v2 } OR [f1, v1, f2, v2]
 fn Redis::hmset ($key, $pairs, %opts) {
     my @flat
     if (ref($pairs) eq "HASH") {
@@ -265,7 +265,7 @@ fn Redis::hmset ($key, $pairs, %opts) {
 
 # ── sorted sets ──────────────────────────────────────────────────────
 
-# $pairs: [score, member, score, member, ...]
+## $pairs: [score, member, score, member, ...]
 fn Redis::zadd ($key, $pairs, %opts) {
     die "Redis::zadd: pairs must be arrayref" unless ref($pairs) eq "ARRAY"
     my $r = Redis::_req({ key => $key, pairs => $pairs }, \%opts)
