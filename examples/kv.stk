@@ -8,7 +8,7 @@ Redis::set("greeting", "hello from stryke")
 p "stored: " . Redis::get("greeting")
 
 Redis::mset({ a => 1, b => 2, c => 3 })
-my @v = Redis::mget(["a", "b", "c"])
+val @v = Redis::mget(["a", "b", "c"])
 p "mget: " . join(",", @v)
 
 p "incr: " . Redis::incr("counter")

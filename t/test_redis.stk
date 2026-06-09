@@ -9,35 +9,35 @@
 
 use Redis
 
-my $have_cdylib = eval { Redis::version(); 1 }
+val $have_cdylib = eval { Redis::version(); 1 }
 unless ($have_cdylib) {
     p "1..0 # SKIP cdylib not loaded — run `s pkg install .` first"
     exit 0
 }
 
-my %conn
+var %conn
 $conn{url} = $ENV{REDIS_URL} if defined $ENV{REDIS_URL}
 unless (Redis::ping(%conn)) {
     p "1..0 # SKIP redis unreachable"
     exit 0
 }
 
-my $pfx = "stryke:test:$$"
+val $pfx = "stryke:test:$$"
 p "1..12"
-my $i = 0
+var $i = 0
 
 # 1. set / get
 eval {
     Redis::set("$pfx:foo", "bar", %conn)
 }
-my $v
+var $v
 eval { $v = Redis::get("$pfx:foo", %conn) }
 $i++
 p $@ ? "not ok $i - set/get: $@" :
        ($v eq "bar" ? "ok $i - set/get" : "not ok $i - set/get got $v")
 
 # 2. incr
-my $n
+var $n
 eval {
     Redis::set("$pfx:n", "10", %conn)
     $n = Redis::incr("$pfx:n", by => 5, %conn)
@@ -49,7 +49,7 @@ p $@ ? "not ok $i - incr: $@" : ($n == 15 ? "ok $i - incr" : "not ok $i - incr=$
 eval {
     Redis::mset({ "$pfx:a" => "1", "$pfx:b" => "2", "$pfx:c" => "3" }, %conn)
 }
-my @mg
+var @mg
 eval { @mg = Redis::mget(["$pfx:a", "$pfx:b", "$pfx:c", "$pfx:nope"], %conn) }
 $i++
 p $@ ? "not ok $i - mset/mget: $@" :
@@ -62,15 +62,15 @@ eval {
     Redis::set("$pfx:exp", "soon", %conn)
     Redis::expire("$pfx:exp", 100, %conn)
 }
-my $ttl
+var $ttl
 eval { $ttl = Redis::ttl("$pfx:exp", %conn) }
 $i++
 p $@ ? "not ok $i - expire/ttl: $@" :
        ($ttl > 0 && $ttl <= 100 ? "ok $i - expire/ttl ($ttl)" : "not ok $i - ttl=$ttl")
 
 # 5. lists
-my $llen
-my @lr
+var $llen
+var @lr
 eval {
     Redis::lpush("$pfx:list", ["a", "b", "c"], %conn)
     $llen = Redis::llen("$pfx:list", %conn)
@@ -83,8 +83,8 @@ p $@ ? "not ok $i - list: $@" :
             : "not ok $i - list wrong: llen=$llen, lr=" . to_json(\@lr))
 
 # 6. sets
-my $sn
-my @sm
+var $sn
+var @sm
 eval {
     Redis::sadd("$pfx:set", ["a", "b", "c"], %conn)
     $sn = Redis::scard("$pfx:set", %conn)
@@ -97,7 +97,7 @@ p $@ ? "not ok $i - set: $@" :
             : "not ok $i - set wrong")
 
 # 7. hash
-my $h
+var $h
 eval {
     Redis::hmset("$pfx:h", { name => "alice", age => "30" }, %conn)
     $h = Redis::hgetall("$pfx:h", %conn)
@@ -109,8 +109,8 @@ p $@ ? "not ok $i - hash: $@" :
             : "not ok $i - hash got " . to_json($h))
 
 # 8. zset
-my @zr
-my $zsc
+var @zr
+var $zsc
 eval {
     Redis::zadd("$pfx:z", { a => 1.0, b => 2.0, c => 3.0 }, %conn)
     @zr = Redis::zrange("$pfx:z", 0, -1, withscores => 1, %conn)
@@ -123,8 +123,8 @@ p $@ ? "not ok $i - zset: $@" :
             : "not ok $i - zset wrong: " . to_json(\@zr) . " score=$zsc")
 
 # 9. exists / del
-my $ex
-my $delcount
+var $ex
+var $delcount
 eval {
     $ex = Redis::exists("$pfx:foo", %conn)
     $delcount = Redis::del(["$pfx:foo", "$pfx:nope"], %conn)
@@ -136,7 +136,7 @@ p $@ ? "not ok $i - exists/del: $@" :
             : "not ok $i - exists=$ex del=$delcount")
 
 # 10. publish (no subscriber; OK if count >= 0)
-my $pubcount
+var $pubcount
 eval { $pubcount = Redis::publish("$pfx:ch", "hello", %conn) }
 $i++
 p $@ ? "not ok $i - publish: $@" :
@@ -144,14 +144,14 @@ p $@ ? "not ok $i - publish: $@" :
         "not ok $i - publish wrong")
 
 # 11. type
-my $type
+var $type
 eval { $type = Redis::type("$pfx:list", %conn) }
 $i++
 p $@ ? "not ok $i - type: $@" :
        ($type eq "list" ? "ok $i - type" : "not ok $i - type=$type")
 
 # 12. scan finds our prefix
-my @keys
+var @keys
 eval { @keys = Redis::scan(match => "$pfx:*", count => 100, %conn) }
 $i++
 p $@ ? "not ok $i - scan: $@" :

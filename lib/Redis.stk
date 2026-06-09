@@ -19,7 +19,7 @@ package Redis
 ## Decode the JSON returned by a `redis__*` FFI call. Dies with a
 ## descriptive message when the cdylib reported an error.
 fn Redis::_decode ($name, $json) {
-    my $o = from_json $json
+    val $o = from_json $json
     if (ref $o eq "HASH" && exists $o->{error}) {
         die "Redis::$name: $o->{error}"
     }
@@ -31,8 +31,8 @@ fn Redis::_decode ($name, $json) {
 ## applies its own defaults. Falls back to $REDIS_URL when neither
 ## `url` nor `host` is supplied — matches the v1 helper-binary ergonomics.
 fn Redis::_req ($extra, $opts) {
-    my %r = %$extra
-    for my $k (qw(url host port db username password tls)) {
+    var %r = %$extra
+    for val $k (qw(url host port db username password tls)) {
         $r{$k} = $opts->{$k} if exists $opts->{$k} && defined $opts->{$k}
     }
     if (!exists $r{url} && !exists $r{host} && defined $ENV{REDIS_URL}) {
@@ -45,14 +45,14 @@ fn Redis::_req ($extra, $opts) {
 
 ## Return the package version string.
 fn Redis::version {
-    my $o = Redis::_decode("version", redis__version("{}"))
+    val $o = Redis::_decode("version", redis__version("{}"))
     $o->{version}
 }
 
 ## Connectivity probe — returns 1 on success, 0 on failure.
 fn Redis::ping (%opts) {
-    my $r = Redis::_req({}, \%opts)
-    my $o = Redis::_decode("ping", redis__ping(to_json($r)))
+    val $r = Redis::_req({}, \%opts)
+    val $o = Redis::_decode("ping", redis__ping(to_json($r)))
     lc($o->{value} // "") eq "pong"
 }
 
@@ -60,13 +60,13 @@ fn Redis::ping (%opts) {
 
 ## Redis GET — return the value at $key, or undef.
 fn Redis::get ($key, %opts) {
-    my $r = Redis::_req({ key => $key }, \%opts)
+    val $r = Redis::_req({ key => $key }, \%opts)
     Redis::_decode("get", redis__get(to_json($r)))->{value}
 }
 
 ## %opts may also include: ex, px, nx, xx.
 fn Redis::set ($key, $value, %opts) {
-    my $r = Redis::_req(
+    val $r = Redis::_req(
         { key => $key, value => $value, ex => $opts{ex}, px => $opts{px},
           nx => ($opts{nx} ? \1 : \0), xx => ($opts{xx} ? \1 : \0) },
         \%opts
@@ -76,60 +76,60 @@ fn Redis::set ($key, $value, %opts) {
 
 ## Redis DEL — delete one or more keys; returns count deleted.
 fn Redis::del ($keys, %opts) {
-    my $list = ref($keys) eq "ARRAY" ? $keys : [$keys]
-    my $r = Redis::_req({ keys => $list }, \%opts)
+    val $list = ref($keys) eq "ARRAY" ? $keys : [$keys]
+    val $r = Redis::_req({ keys => $list }, \%opts)
     Redis::_decode("del", redis__del(to_json($r)))->{value}
 }
 
 ## Redis EXISTS — count of keys that exist (0/1 for one key).
 fn Redis::exists ($keys, %opts) {
-    my $list = ref($keys) eq "ARRAY" ? $keys : [$keys]
-    my $r = Redis::_req({ keys => $list }, \%opts)
+    val $list = ref($keys) eq "ARRAY" ? $keys : [$keys]
+    val $r = Redis::_req({ keys => $list }, \%opts)
     Redis::_decode("exists", redis__exists(to_json($r)))->{value}
 }
 
 ## Redis EXPIRE — set TTL (seconds) on $key. Returns 1 if applied.
 fn Redis::expire ($key, $seconds, %opts) {
-    my $r = Redis::_req({ key => $key, seconds => $seconds }, \%opts)
+    val $r = Redis::_req({ key => $key, seconds => $seconds }, \%opts)
     Redis::_decode("expire", redis__expire(to_json($r)))->{value}
 }
 
 ## Redis TTL — seconds remaining; -1 no TTL, -2 missing.
 fn Redis::ttl ($key, %opts) {
-    my $r = Redis::_req({ key => $key }, \%opts)
+    val $r = Redis::_req({ key => $key }, \%opts)
     Redis::_decode("ttl", redis__ttl(to_json($r)))->{value}
 }
 
 ## Redis TYPE — "string"|"list"|"set"|"zset"|"hash"|"stream"|"none".
 fn Redis::type ($key, %opts) {
-    my $r = Redis::_req({ key => $key }, \%opts)
+    val $r = Redis::_req({ key => $key }, \%opts)
     Redis::_decode("type", redis__type(to_json($r)))->{type}
 }
 
 ## Redis INCR (or INCRBY when `by => N`) — return new value.
 fn Redis::incr ($key, %opts) {
-    my $r = Redis::_req({ key => $key, by => $opts{by} }, \%opts)
+    val $r = Redis::_req({ key => $key, by => $opts{by} }, \%opts)
     Redis::_decode("incr", redis__incr(to_json($r)))->{value}
 }
 
 ## Redis DECR (or DECRBY when `by => N`) — return new value.
 fn Redis::decr ($key, %opts) {
-    my $r = Redis::_req({ key => $key, by => $opts{by} }, \%opts)
+    val $r = Redis::_req({ key => $key, by => $opts{by} }, \%opts)
     Redis::_decode("decr", redis__decr(to_json($r)))->{value}
 }
 
 ## Redis MGET — array of values, one per key (undef for missing).
 fn Redis::mget ($keys, %opts) {
-    my $list = ref($keys) eq "ARRAY" ? $keys : [$keys]
-    my $r = Redis::_req({ keys => $list }, \%opts)
+    val $list = ref($keys) eq "ARRAY" ? $keys : [$keys]
+    val $r = Redis::_req({ keys => $list }, \%opts)
     @{ Redis::_decode("mget", redis__mget(to_json($r)))->{values} }
 }
 
 ## $pairs: { k1 => v1, k2 => v2 } OR [k1, v1, k2, v2]
 fn Redis::mset ($pairs, %opts) {
-    my @flat
+    var @flat
     if (ref($pairs) eq "HASH") {
-        for my $k (keys %$pairs) {
+        for val $k (keys %$pairs) {
             push @flat, $k, $pairs->{$k}
         }
     } elsif (ref($pairs) eq "ARRAY") {
@@ -137,19 +137,19 @@ fn Redis::mset ($pairs, %opts) {
     } else {
         die "Redis::mset: pass a hashref or arrayref of pairs"
     }
-    my $r = Redis::_req({ pairs => \@flat }, \%opts)
+    val $r = Redis::_req({ pairs => \@flat }, \%opts)
     Redis::_decode("mset", redis__mset(to_json($r)))->{ok}
 }
 
 ## Redis KEYS — array of matching key names (blocking; use scan in prod).
 fn Redis::keys ($pattern, %opts) {
-    my $r = Redis::_req({ pattern => $pattern }, \%opts)
+    val $r = Redis::_req({ pattern => $pattern }, \%opts)
     @{ Redis::_decode("keys", redis__keys(to_json($r)))->{keys} }
 }
 
 ## Redis SCAN — array of key names matching `match` (non-blocking).
 fn Redis::scan (%opts) {
-    my $r = Redis::_req(
+    val $r = Redis::_req(
         { match => $opts{match}, count => $opts{count}, limit => $opts{limit} },
         \%opts
     )
@@ -160,41 +160,41 @@ fn Redis::scan (%opts) {
 
 ## Redis LPUSH — prepend values to list; returns new length.
 fn Redis::lpush ($key, $values, %opts) {
-    my $list = ref($values) eq "ARRAY" ? $values : [$values]
-    my $r = Redis::_req({ key => $key, values => $list }, \%opts)
+    val $list = ref($values) eq "ARRAY" ? $values : [$values]
+    val $r = Redis::_req({ key => $key, values => $list }, \%opts)
     Redis::_decode("lpush", redis__lpush(to_json($r)))->{value}
 }
 
 ## Redis RPUSH — append values to list; returns new length.
 fn Redis::rpush ($key, $values, %opts) {
-    my $list = ref($values) eq "ARRAY" ? $values : [$values]
-    my $r = Redis::_req({ key => $key, values => $list }, \%opts)
+    val $list = ref($values) eq "ARRAY" ? $values : [$values]
+    val $r = Redis::_req({ key => $key, values => $list }, \%opts)
     Redis::_decode("rpush", redis__rpush(to_json($r)))->{value}
 }
 
 ## Redis LPOP — pop one value from head, or N when `count => N`.
 fn Redis::lpop ($key, %opts) {
-    my $r = Redis::_req({ key => $key, count => $opts{count} }, \%opts)
-    my $o = Redis::_decode("lpop", redis__lpop(to_json($r)))
+    val $r = Redis::_req({ key => $key, count => $opts{count} }, \%opts)
+    val $o = Redis::_decode("lpop", redis__lpop(to_json($r)))
     defined $opts{count} ? @{ $o->{values} } : $o->{value}
 }
 
 ## Redis RPOP — pop one value from tail, or N when `count => N`.
 fn Redis::rpop ($key, %opts) {
-    my $r = Redis::_req({ key => $key, count => $opts{count} }, \%opts)
-    my $o = Redis::_decode("rpop", redis__rpop(to_json($r)))
+    val $r = Redis::_req({ key => $key, count => $opts{count} }, \%opts)
+    val $o = Redis::_decode("rpop", redis__rpop(to_json($r)))
     defined $opts{count} ? @{ $o->{values} } : $o->{value}
 }
 
 ## Redis LRANGE — array of values in [start, stop] (inclusive).
 fn Redis::lrange ($key, $start, $stop, %opts) {
-    my $r = Redis::_req({ key => $key, start => $start, stop => $stop }, \%opts)
+    val $r = Redis::_req({ key => $key, start => $start, stop => $stop }, \%opts)
     @{ Redis::_decode("lrange", redis__lrange(to_json($r)))->{values} }
 }
 
 ## Redis LLEN — list length.
 fn Redis::llen ($key, %opts) {
-    my $r = Redis::_req({ key => $key }, \%opts)
+    val $r = Redis::_req({ key => $key }, \%opts)
     Redis::_decode("llen", redis__llen(to_json($r)))->{value}
 }
 
@@ -202,33 +202,33 @@ fn Redis::llen ($key, %opts) {
 
 ## Redis SADD — add members to set; returns count newly added.
 fn Redis::sadd ($key, $members, %opts) {
-    my $list = ref($members) eq "ARRAY" ? $members : [$members]
-    my $r = Redis::_req({ key => $key, members => $list }, \%opts)
+    val $list = ref($members) eq "ARRAY" ? $members : [$members]
+    val $r = Redis::_req({ key => $key, members => $list }, \%opts)
     Redis::_decode("sadd", redis__sadd(to_json($r)))->{value}
 }
 
 ## Redis SREM — remove members from set; returns count removed.
 fn Redis::srem ($key, $members, %opts) {
-    my $list = ref($members) eq "ARRAY" ? $members : [$members]
-    my $r = Redis::_req({ key => $key, members => $list }, \%opts)
+    val $list = ref($members) eq "ARRAY" ? $members : [$members]
+    val $r = Redis::_req({ key => $key, members => $list }, \%opts)
     Redis::_decode("srem", redis__srem(to_json($r)))->{value}
 }
 
 ## Redis SMEMBERS — array of set members.
 fn Redis::smembers ($key, %opts) {
-    my $r = Redis::_req({ key => $key }, \%opts)
+    val $r = Redis::_req({ key => $key }, \%opts)
     @{ Redis::_decode("smembers", redis__smembers(to_json($r)))->{members} }
 }
 
 ## Redis SISMEMBER — 1 if member is in set, else 0.
 fn Redis::sismember ($key, $m, %opts) {
-    my $r = Redis::_req({ key => $key, member => $m }, \%opts)
+    val $r = Redis::_req({ key => $key, member => $m }, \%opts)
     Redis::_decode("sismember", redis__sismember(to_json($r)))->{value} ? 1 : 0
 }
 
 ## Redis SCARD — set cardinality.
 fn Redis::scard ($key, %opts) {
-    my $r = Redis::_req({ key => $key }, \%opts)
+    val $r = Redis::_req({ key => $key }, \%opts)
     Redis::_decode("scard", redis__scard(to_json($r)))->{value}
 }
 
@@ -236,53 +236,53 @@ fn Redis::scard ($key, %opts) {
 
 ## Redis HSET — set field=value; returns count newly set.
 fn Redis::hset ($key, $field, $value, %opts) {
-    my $r = Redis::_req({ key => $key, field => $field, value => $value }, \%opts)
+    val $r = Redis::_req({ key => $key, field => $field, value => $value }, \%opts)
     Redis::_decode("hset", redis__hset(to_json($r)))->{value}
 }
 
 ## Redis HGET — value of field, or undef.
 fn Redis::hget ($key, $field, %opts) {
-    my $r = Redis::_req({ key => $key, field => $field }, \%opts)
+    val $r = Redis::_req({ key => $key, field => $field }, \%opts)
     Redis::_decode("hget", redis__hget(to_json($r)))->{value}
 }
 
 ## Redis HDEL — delete fields; returns count removed.
 fn Redis::hdel ($key, $fields, %opts) {
-    my $list = ref($fields) eq "ARRAY" ? $fields : [$fields]
-    my $r = Redis::_req({ key => $key, fields => $list }, \%opts)
+    val $list = ref($fields) eq "ARRAY" ? $fields : [$fields]
+    val $r = Redis::_req({ key => $key, fields => $list }, \%opts)
     Redis::_decode("hdel", redis__hdel(to_json($r)))->{value}
 }
 
 ## Redis HGETALL — full hash as a flat list (use as %h).
 fn Redis::hgetall ($key, %opts) {
-    my $r = Redis::_req({ key => $key }, \%opts)
+    val $r = Redis::_req({ key => $key }, \%opts)
     %{ Redis::_decode("hgetall", redis__hgetall(to_json($r)))->{hash} }
 }
 
 ## Redis HKEYS — array of field names.
 fn Redis::hkeys ($key, %opts) {
-    my $r = Redis::_req({ key => $key }, \%opts)
+    val $r = Redis::_req({ key => $key }, \%opts)
     @{ Redis::_decode("hkeys", redis__hkeys(to_json($r)))->{keys} }
 }
 
 ## Redis HVALS — array of field values.
 fn Redis::hvals ($key, %opts) {
-    my $r = Redis::_req({ key => $key }, \%opts)
+    val $r = Redis::_req({ key => $key }, \%opts)
     @{ Redis::_decode("hvals", redis__hvals(to_json($r)))->{values} }
 }
 
 ## Redis HMGET — array of values for the given field names.
 fn Redis::hmget ($key, $fields, %opts) {
-    my $list = ref($fields) eq "ARRAY" ? $fields : [$fields]
-    my $r = Redis::_req({ key => $key, fields => $list }, \%opts)
+    val $list = ref($fields) eq "ARRAY" ? $fields : [$fields]
+    val $r = Redis::_req({ key => $key, fields => $list }, \%opts)
     @{ Redis::_decode("hmget", redis__hmget(to_json($r)))->{values} }
 }
 
 ## $pairs: { f1 => v1, f2 => v2 } OR [f1, v1, f2, v2]
 fn Redis::hmset ($key, $pairs, %opts) {
-    my @flat
+    var @flat
     if (ref($pairs) eq "HASH") {
-        for my $k (keys %$pairs) {
+        for val $k (keys %$pairs) {
             push @flat, $k, $pairs->{$k}
         }
     } elsif (ref($pairs) eq "ARRAY") {
@@ -290,7 +290,7 @@ fn Redis::hmset ($key, $pairs, %opts) {
     } else {
         die "Redis::hmset: pass a hashref or arrayref of pairs"
     }
-    my $r = Redis::_req({ key => $key, pairs => \@flat }, \%opts)
+    val $r = Redis::_req({ key => $key, pairs => \@flat }, \%opts)
     Redis::_decode("hmset", redis__hmset(to_json($r)))->{ok}
 }
 
@@ -299,38 +299,38 @@ fn Redis::hmset ($key, $pairs, %opts) {
 ## $pairs: [score, member, score, member, ...]
 fn Redis::zadd ($key, $pairs, %opts) {
     die "Redis::zadd: pairs must be arrayref" unless ref($pairs) eq "ARRAY"
-    my $r = Redis::_req({ key => $key, pairs => $pairs }, \%opts)
+    val $r = Redis::_req({ key => $key, pairs => $pairs }, \%opts)
     Redis::_decode("zadd", redis__zadd(to_json($r)))->{value}
 }
 
 ## Redis ZRANGE — array of members in [start, stop]; opts: with_scores, rev.
 fn Redis::zrange ($key, $start, $stop, %opts) {
-    my $r = Redis::_req(
+    val $r = Redis::_req(
         { key => $key, start => $start, stop => $stop,
           with_scores => ($opts{with_scores} ? \1 : \0),
           rev => ($opts{rev} ? \1 : \0) },
         \%opts
     )
-    my $o = Redis::_decode("zrange", redis__zrange(to_json($r)))
+    val $o = Redis::_decode("zrange", redis__zrange(to_json($r)))
     $opts{with_scores} ? @{ $o->{pairs} } : @{ $o->{values} }
 }
 
 ## Redis ZREM — remove members from sorted set; returns count removed.
 fn Redis::zrem ($key, $members, %opts) {
-    my $list = ref($members) eq "ARRAY" ? $members : [$members]
-    my $r = Redis::_req({ key => $key, members => $list }, \%opts)
+    val $list = ref($members) eq "ARRAY" ? $members : [$members]
+    val $r = Redis::_req({ key => $key, members => $list }, \%opts)
     Redis::_decode("zrem", redis__zrem(to_json($r)))->{value}
 }
 
 ## Redis ZCARD — sorted-set cardinality.
 fn Redis::zcard ($key, %opts) {
-    my $r = Redis::_req({ key => $key }, \%opts)
+    val $r = Redis::_req({ key => $key }, \%opts)
     Redis::_decode("zcard", redis__zcard(to_json($r)))->{value}
 }
 
 ## Redis ZSCORE — score of $member as float, or undef.
 fn Redis::zscore ($key, $member, %opts) {
-    my $r = Redis::_req({ key => $key, member => $member }, \%opts)
+    val $r = Redis::_req({ key => $key, member => $member }, \%opts)
     Redis::_decode("zscore", redis__zscore(to_json($r)))->{value}
 }
 
@@ -338,7 +338,7 @@ fn Redis::zscore ($key, $member, %opts) {
 
 ## Redis PUBLISH — push message to channel; returns subscriber count.
 fn Redis::publish ($channel, $message, %opts) {
-    my $r = Redis::_req({ channel => $channel, message => $message }, \%opts)
+    val $r = Redis::_req({ channel => $channel, message => $message }, \%opts)
     Redis::_decode("publish", redis__publish(to_json($r)))->{value}
 }
 
@@ -346,19 +346,19 @@ fn Redis::publish ($channel, $message, %opts) {
 
 ## Redis INFO — server info as a single string (optional `section`).
 fn Redis::info (%opts) {
-    my $r = Redis::_req({ section => $opts{section} }, \%opts)
+    val $r = Redis::_req({ section => $opts{section} }, \%opts)
     Redis::_decode("info", redis__info(to_json($r)))->{info}
 }
 
 ## Redis DBSIZE — key count in the current DB.
 fn Redis::dbsize (%opts) {
-    my $r = Redis::_req({}, \%opts)
+    val $r = Redis::_req({}, \%opts)
     Redis::_decode("dbsize", redis__dbsize(to_json($r)))->{value}
 }
 
 ## Redis FLUSHDB — wipe current DB; opt `async => 1`.
 fn Redis::flushdb (%opts) {
-    my $r = Redis::_req({ asynchronous => ($opts{async} ? \1 : \0) }, \%opts)
+    val $r = Redis::_req({ asynchronous => ($opts{async} ? \1 : \0) }, \%opts)
     Redis::_decode("flushdb", redis__flushdb(to_json($r)))->{ok}
 }
 
@@ -366,8 +366,8 @@ fn Redis::flushdb (%opts) {
 
 ## Redis raw command — pass ["CMD", ...args] arrayref. Escape hatch.
 fn Redis::raw ($argv_in, %opts) {
-    my $argv = ref($argv_in) eq "ARRAY" ? $argv_in : [$argv_in]
-    my $r = Redis::_req({ argv => $argv }, \%opts)
+    val $argv = ref($argv_in) eq "ARRAY" ? $argv_in : [$argv_in]
+    val $r = Redis::_req({ argv => $argv }, \%opts)
     Redis::_decode("raw", redis__raw(to_json($r)))->{value}
 }
 

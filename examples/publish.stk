@@ -4,8 +4,8 @@
 
 use Redis
 
-my ($ch, $msg) = @ARGV
+val ($ch, $msg) = @ARGV
 die "usage: publish.stk CHANNEL MESSAGE\n" unless defined $msg
 
-my $n = Redis::publish $ch, $msg
+val $n = Redis::publish $ch, $msg
 p "delivered to $n subscriber(s)"

@@ -12,7 +12,7 @@ p "lpop:   " . Redis::lpop("events")
 
 # Hash.
 Redis::hmset "user:42", { name => "alice", age => 30, role => "admin" }
-my $u = Redis::hgetall "user:42"
+val $u = Redis::hgetall "user:42"
 p "user:42 name=$u->{name} age=$u->{age} role=$u->{role}"
 
 # Set.
@@ -22,8 +22,8 @@ p "tags#:  " . Redis::scard("tags")
 
 # Sorted set.
 Redis::zadd "leaderboard", { alice => 100, bob => 200, charlie => 150 }
-my @lb = Redis::zrange "leaderboard", 0, -1, withscores => 1, rev => 1
-for my $e (@lb) {
+val @lb = Redis::zrange "leaderboard", 0, -1, withscores => 1, rev => 1
+for val $e (@lb) {
     p "  $e->{member}: $e->{score}"
 }
 
