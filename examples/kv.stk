@@ -4,6 +4,12 @@
 
 use Redis
 
+val $alive = eval { Redis::ping() }
+unless ($alive) {
+    p "redis not reachable — set REDIS_URL or start redis to exercise the demo"
+    exit 0
+}
+
 Redis::set("greeting", "hello from stryke")
 p "stored: " . Redis::get("greeting")
 
