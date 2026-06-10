@@ -1122,8 +1122,14 @@ mod tests {
         let base = url_from_opts(&json!({"host": "h1", "port": 6379}));
         let other_host = url_from_opts(&json!({"host": "h2", "port": 6379}));
         let other_port = url_from_opts(&json!({"host": "h1", "port": 6380}));
-        assert_ne!(base, other_host, "host collision: {base:?} vs {other_host:?}");
-        assert_ne!(base, other_port, "port collision: {base:?} vs {other_port:?}");
+        assert_ne!(
+            base, other_host,
+            "host collision: {base:?} vs {other_host:?}"
+        );
+        assert_ne!(
+            base, other_port,
+            "port collision: {base:?} vs {other_port:?}"
+        );
         // And differing url-field strings must also produce distinct keys.
         let url_a = url_from_opts(&json!({"url": "redis://h1:6379/0"}));
         let url_b = url_from_opts(&json!({"url": "redis://h2:6379/0"}));
