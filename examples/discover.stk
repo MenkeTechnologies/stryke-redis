@@ -1,0 +1,48 @@
+#!/usr/bin/env stryke
+# examples/discover.stk — minimum-viable tour of the `Redis` package.
+#
+# Runs end-to-end in CI without a live redis: the eval-guarded `Redis::ping`
+# returns false-ish, the round-trip block skips, and the summary still
+# prints. With `REDIS_URL=redis://localhost` (and a server up), the
+# round-trip block exercises set + get + del + ttl on a process-unique
+# key so concurrent CI runs don't collide.
+#
+# Run:   s examples/discover.stk
+#        REDIS_URL=redis://localhost:6379 s examples/discover.stk
+
+use Redis
+
+p "=== Redis discover ==="
+p "version:  " . Redis::version()
+p "redis_url: " . ($ENV{REDIS_URL} // "(default localhost:6379)")
+p ""
+
+val $alive = eval { Redis::ping() }
+
+if ($alive) {
+    val $key = "stryke-redis-discover-$$"
+    p "service:  reachable — exercising round-trip on `$key`"
+
+    Redis::set($key, "hello-from-stryke-$$")
+    val $got = Redis::get($key)
+    p "  set/get  -> $got"
+
+    Redis::expire($key, 60)
+    val $ttl = Redis::ttl($key)
+    p "  ttl(60)  -> $ttl seconds"
+
+    val $type = Redis::type($key)
+    p "  type     -> $type"
+
+    val $removed = Redis::del([$key])
+    p "  del      -> $removed key(s) removed"
+} else {
+    p "service:  not reachable — set REDIS_URL or start redis to enable round-trip"
+    p ""
+    p "expected call shape when live:"
+    p "  Redis::set(\$key, \$value)"
+    p "  Redis::get(\$key)"
+    p "  Redis::expire(\$key, 60)"
+    p "  Redis::ttl(\$key)"
+    p "  Redis::del([\$key])"
+}
