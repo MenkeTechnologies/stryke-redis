@@ -1,0 +1,53 @@
+#!/usr/bin/env stryke
+# examples/pipeline.stk — TTL + MSET/MGET + increment counters.
+#
+# Demonstrates idioms beyond simple GET/SET: bulk MSET, atomic counters,
+# TTL on counter keys for rate-limit-style usage. Eval-guarded so missing
+# redis just skips with a clear message — exits 0 in CI.
+#
+# Run:   s examples/pipeline.stk
+#        REDIS_URL=redis://localhost s examples/pipeline.stk
+
+use Redis
+
+p "=== Redis pipeline patterns ==="
+
+val $alive = eval { Redis::ping() }
+unless ($alive) {
+    p "redis not reachable — set REDIS_URL or start redis to exercise the demo"
+    exit 0
+}
+
+val $prefix = "stryke-pipeline-$$"
+
+# Bulk write via MSET — fewer round-trips than N individual SETs.
+val %kvs = (
+    "$prefix:a" => "alpha",
+    "$prefix:b" => "beta",
+    "$prefix:c" => "gamma",
+)
+Redis::mset(\%kvs)
+p "mset: " . scalar(keys %kvs) . " keys"
+
+# Bulk read via MGET.
+val @ks = ("$prefix:a", "$prefix:b", "$prefix:c")
+val @vs = Redis::mget(\@ks)
+for (var $i = 0; $i < scalar(@ks); $i++) {
+    p "  $ks[$i] -> $vs[$i]"
+}
+
+# Atomic counter with TTL — classic rate-limit pattern.
+val $ctr = "$prefix:hits"
+for (var $i = 0; $i < 5; $i++) {
+    Redis::incr($ctr)
+}
+Redis::expire($ctr, 60)
+val $n = Redis::get($ctr)
+val $ttl = Redis::ttl($ctr)
+p ""
+p "counter:  $ctr = $n (ttl ${ttl}s)"
+
+# Cleanup.
+val @keys = (keys %kvs, $ctr)
+val $removed = Redis::del(\@keys)
+p "cleaned:  $removed key(s) removed"
