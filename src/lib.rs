@@ -1129,4 +1129,39 @@ mod tests {
         let url_b = url_from_opts(&json!({"url": "redis://h2:6379/0"}));
         assert_ne!(url_a, url_b);
     }
+
+    /// `string_vec` accepts 3 shapes the callers exercise: a JSON array of
+    /// strings, a single bare string (auto-wrapped), and null (empty).
+    /// Anything else errors. Pin so a refactor that "helpfully" stringifies
+    /// numbers or strips nulls from arrays gets caught.
+    #[test]
+    fn string_vec_array_of_strings_round_trips() {
+        let v = string_vec(&json!(["a", "b", "c"])).unwrap();
+        assert_eq!(v, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn string_vec_bare_string_auto_wraps_to_single_element() {
+        // Caller convenience: `del("foo")` works the same as `del(["foo"])`.
+        let v = string_vec(&json!("foo")).unwrap();
+        assert_eq!(v, vec!["foo"]);
+    }
+
+    #[test]
+    fn string_vec_null_yields_empty() {
+        let v = string_vec(&Value::Null).unwrap();
+        assert!(v.is_empty());
+    }
+
+    #[test]
+    fn string_vec_array_with_non_string_errors() {
+        let err = string_vec(&json!(["a", 42, "b"])).unwrap_err().to_string();
+        assert!(err.contains("non-string"), "got: {err}");
+    }
+
+    #[test]
+    fn string_vec_non_array_non_string_errors() {
+        let err = string_vec(&json!({"k": "v"})).unwrap_err().to_string();
+        assert!(err.contains("expected string"), "got: {err}");
+    }
 }
