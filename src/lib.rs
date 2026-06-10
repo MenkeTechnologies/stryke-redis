@@ -1039,4 +1039,94 @@ mod tests {
         assert_eq!(v["k1"], json!(1));
         assert_eq!(v["k2"], json!("v2"));
     }
+
+    // ── new hand-crafted bug-class catchers ──
+
+    /// `redis_value_to_json` is the only path the `raw` escape hatch has for
+    /// reflecting arbitrary RESP replies. A Map → Array → BulkString chain is
+    /// the exact shape returned by HGETALL via RAW, by XRANGE entries, and by
+    /// many Stream / cluster commands. A future "fast path" refactor that
+    /// flattens or collapses any single layer would silently corrupt the JSON
+    /// the stryke caller sees. Test pins that each layer is preserved
+    /// AND that the inner BulkString bytes survive recursion intact.
+    #[test]
+    fn rv2j_three_deep_map_array_bulk_preserves_structure() {
+        let v = redis_value_to_json(redis::Value::Map(vec![(
+            redis::Value::SimpleString("entries".into()),
+            redis::Value::Array(vec![
+                redis::Value::BulkString(b"a".to_vec()),
+                redis::Value::Array(vec![
+                    redis::Value::Int(7),
+                    redis::Value::BulkString(b"deep".to_vec()),
+                ]),
+            ]),
+        )]));
+        // Map preserved as object, array preserved as array, bulk preserved as string,
+        // recursion descends into the inner array (not stringified via Debug).
+        assert_eq!(v["entries"][0], json!("a"));
+        assert_eq!(v["entries"][1], json!([7, "deep"]));
+        // Defensive: if a future refactor falls through to the `other =>` Debug
+        // arm at any layer, the result would contain the literal "Array(" or
+        // "BulkString(" tokens. Reject that.
+        let s = serde_json::to_string(&v).unwrap();
+        assert!(!s.contains("Array("), "Debug-formatted leak: {s}");
+        assert!(!s.contains("BulkString("), "Debug-formatted leak: {s}");
+        assert!(!s.contains("SimpleString("), "Debug-formatted leak: {s}");
+    }
+
+    /// Redis strings are binary-safe: keys and values can contain NUL (`0x00`)
+    /// bytes. Because this cdylib hands strings back to stryke through C
+    /// strings via `CString::new` in `ffi_call`, any path that converts a Redis
+    /// bulk reply via `String::from_utf8` and then re-serializes must NOT lose
+    /// or truncate at the embedded NUL — the NUL only matters at the final
+    /// `CString::new` boundary, which is responsible for rejecting NULs. This
+    /// test pins that the JSON-encoded form of a bulk string with an embedded
+    /// NUL is a faithful JSON string (length preserved, NUL JSON-escaped as
+    /// ` `), not the `<binary N bytes>` fallback (which would mean a
+    /// regression replaced `from_utf8` with stricter validation).
+    #[test]
+    fn rv2j_bulk_with_embedded_nul_is_round_tripped_as_json_string() {
+        let v = redis_value_to_json(redis::Value::BulkString(b"a\0b".to_vec()));
+        // Must round-trip via JSON; serde_json will escape   in the output.
+        let s = serde_json::to_string(&v).unwrap();
+        assert_eq!(s, "\"a\\u0000b\"", "actual: {s}");
+        // And the decoded value must be the original 3-byte string.
+        assert_eq!(v.as_str().map(str::len), Some(3));
+        assert!(!s.contains("<binary"), "fell through to non-utf8 fallback");
+    }
+
+    /// `string_vec` must not silently flatten or stringify nested arrays —
+    /// stryke callers passing `[["a","b"]]` (one bad layer of wrapping) should
+    /// get an error, not the surprise singleton `[\"[\\\"a\\\",\\\"b\\\"]\"]` or
+    /// the silent flattening `[\"a\",\"b\"]`. Without this pin, a future "be
+    /// lenient about input shape" refactor could introduce a write-amplification
+    /// bug where `DEL [["k1","k2"]]` deletes one key named `["k1","k2"]`
+    /// instead of two keys, or vice versa.
+    #[test]
+    fn sv_nested_array_errors_not_flattens_or_stringifies() {
+        let v = json!([["a", "b"]]);
+        let err = string_vec(&v).unwrap_err().to_string();
+        assert!(err.contains("non-string"), "{err}");
+    }
+
+    /// ConnKey participates in connection-cache lookup. Two opts dicts that
+    /// differ only in host MUST map to different ConnKeys — otherwise stryke
+    /// would reuse a localhost connection for a remote target (or vice versa).
+    /// `db`/`credentials` are already pinned; `host` and `port` are not —
+    /// they're folded into the derived URL string but a future refactor that
+    /// adds explicit `host`/`port` fields to ConnKey and forgets to fall back
+    /// to them when the `url` field is present (or vice versa) would silently
+    /// break cache isolation. Pin both at once.
+    #[test]
+    fn conn_key_distinguishes_host_and_port_independently() {
+        let base = url_from_opts(&json!({"host": "h1", "port": 6379}));
+        let other_host = url_from_opts(&json!({"host": "h2", "port": 6379}));
+        let other_port = url_from_opts(&json!({"host": "h1", "port": 6380}));
+        assert_ne!(base, other_host, "host collision: {base:?} vs {other_host:?}");
+        assert_ne!(base, other_port, "port collision: {base:?} vs {other_port:?}");
+        // And differing url-field strings must also produce distinct keys.
+        let url_a = url_from_opts(&json!({"url": "redis://h1:6379/0"}));
+        let url_b = url_from_opts(&json!({"url": "redis://h2:6379/0"}));
+        assert_ne!(url_a, url_b);
+    }
 }
