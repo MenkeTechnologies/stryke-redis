@@ -1,0 +1,65 @@
+## t/test_stryke_redis_surface.stk — wrapper-completeness pin.
+##
+## Asserts every public `fn X::Y::name` declared in lib/*.stk is
+## reachable via `use` at runtime. Uses `exists &X::Y::name` to
+## probe the symbol table without invoking the sub.
+##
+## Catches:
+##   * a wrapper sub deleted from lib/ but still referenced elsewhere
+##   * a sub-package file dropped from the install layout
+##   * `use Foo::Bar` failing to chase into lib/Bar.stk
+##   * an installed-package entry whose namespace bridge is broken
+##
+## Permission-free — no service, no creds, no live daemon. Private
+## helpers (`_` prefix) are implementation detail and are NOT
+## asserted, so refactoring internals stays free.
+
+use Redis
+
+# ── Redis.stk ──────────────────────────────────────────────
+assert_ok exists &Redis::version, "Redis::version exists"
+assert_ok exists &Redis::ping, "Redis::ping exists"
+assert_ok exists &Redis::get, "Redis::get exists"
+assert_ok exists &Redis::set, "Redis::set exists"
+assert_ok exists &Redis::del, "Redis::del exists"
+assert_ok exists &Redis::exists, "Redis::exists exists"
+assert_ok exists &Redis::expire, "Redis::expire exists"
+assert_ok exists &Redis::ttl, "Redis::ttl exists"
+assert_ok exists &Redis::type, "Redis::type exists"
+assert_ok exists &Redis::incr, "Redis::incr exists"
+assert_ok exists &Redis::decr, "Redis::decr exists"
+assert_ok exists &Redis::mget, "Redis::mget exists"
+assert_ok exists &Redis::mset, "Redis::mset exists"
+assert_ok exists &Redis::keys, "Redis::keys exists"
+assert_ok exists &Redis::scan, "Redis::scan exists"
+assert_ok exists &Redis::lpush, "Redis::lpush exists"
+assert_ok exists &Redis::rpush, "Redis::rpush exists"
+assert_ok exists &Redis::lpop, "Redis::lpop exists"
+assert_ok exists &Redis::rpop, "Redis::rpop exists"
+assert_ok exists &Redis::lrange, "Redis::lrange exists"
+assert_ok exists &Redis::llen, "Redis::llen exists"
+assert_ok exists &Redis::sadd, "Redis::sadd exists"
+assert_ok exists &Redis::srem, "Redis::srem exists"
+assert_ok exists &Redis::smembers, "Redis::smembers exists"
+assert_ok exists &Redis::sismember, "Redis::sismember exists"
+assert_ok exists &Redis::scard, "Redis::scard exists"
+assert_ok exists &Redis::hset, "Redis::hset exists"
+assert_ok exists &Redis::hget, "Redis::hget exists"
+assert_ok exists &Redis::hdel, "Redis::hdel exists"
+assert_ok exists &Redis::hgetall, "Redis::hgetall exists"
+assert_ok exists &Redis::hkeys, "Redis::hkeys exists"
+assert_ok exists &Redis::hvals, "Redis::hvals exists"
+assert_ok exists &Redis::hmget, "Redis::hmget exists"
+assert_ok exists &Redis::hmset, "Redis::hmset exists"
+assert_ok exists &Redis::zadd, "Redis::zadd exists"
+assert_ok exists &Redis::zrange, "Redis::zrange exists"
+assert_ok exists &Redis::zrem, "Redis::zrem exists"
+assert_ok exists &Redis::zcard, "Redis::zcard exists"
+assert_ok exists &Redis::zscore, "Redis::zscore exists"
+assert_ok exists &Redis::publish, "Redis::publish exists"
+assert_ok exists &Redis::info, "Redis::info exists"
+assert_ok exists &Redis::dbsize, "Redis::dbsize exists"
+assert_ok exists &Redis::flushdb, "Redis::flushdb exists"
+assert_ok exists &Redis::raw, "Redis::raw exists"
+
+test_run
