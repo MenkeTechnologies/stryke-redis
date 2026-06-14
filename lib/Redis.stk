@@ -935,3 +935,120 @@ fn Redis::pipeline ($commands, %opts) {
     @{ Redis::_decode("pipeline", redis__pipeline(to_json($r)))->{results} }
 }
 
+# ── server admin + introspection ─────────────────────────────────────
+
+## Redis WAIT — block until $numreplicas acks, or $timeout ms (0 = forever).
+## Returns the number of replicas that acknowledged.
+fn Redis::wait ($numreplicas, %opts) {
+    val $r = Redis::_req({ numreplicas => $numreplicas, timeout => $opts{timeout} }, \%opts)
+    Redis::_decode("wait", redis__wait(to_json($r)))->{value}
+}
+
+## Redis LASTSAVE — unix time of the last successful RDB save.
+fn Redis::lastsave (%opts) {
+    Redis::_decode("lastsave", redis__lastsave(to_json(Redis::_req({}, \%opts))))->{value}
+}
+
+## Redis SLOWLOG GET — recent slow-command entries (opt `count`).
+fn Redis::slowlog_get (%opts) {
+    val $r = Redis::_req({ count => $opts{count} }, \%opts)
+    Redis::_decode("slowlog_get", redis__slowlog_get(to_json($r)))->{entries}
+}
+
+## Redis SLOWLOG RESET — clear the slow log. Returns 1.
+fn Redis::slowlog_reset (%opts) {
+    Redis::_decode("slowlog_reset", redis__slowlog_reset(to_json(Redis::_req({}, \%opts))))->{ok}
+}
+
+## Redis CLIENT LIST — one text line per connected client.
+fn Redis::client_list (%opts) {
+    Redis::_decode("client_list", redis__client_list(to_json(Redis::_req({}, \%opts))))->{value}
+}
+
+## Redis CLIENT INFO — info line for the current connection.
+fn Redis::client_info (%opts) {
+    Redis::_decode("client_info", redis__client_info(to_json(Redis::_req({}, \%opts))))->{value}
+}
+
+## Redis ACL WHOAMI — the username of the current connection.
+fn Redis::acl_whoami (%opts) {
+    Redis::_decode("acl_whoami", redis__acl_whoami(to_json(Redis::_req({}, \%opts))))->{value}
+}
+
+## Redis ACL LIST — the configured ACL rules, one string per user.
+fn Redis::acl_list (%opts) {
+    @{ Redis::_decode("acl_list", redis__acl_list(to_json(Redis::_req({}, \%opts))))->{rules} }
+}
+
+## Redis ACL CAT — command categories, or the commands in opt `category`.
+fn Redis::acl_cat (%opts) {
+    val $r = Redis::_req({ category => $opts{category} }, \%opts)
+    @{ Redis::_decode("acl_cat", redis__acl_cat(to_json($r)))->{categories} }
+}
+
+## Redis OBJECT IDLETIME — seconds $key has been idle, or undef.
+fn Redis::object_idletime ($key, %opts) {
+    val $r = Redis::_req({ key => $key }, \%opts)
+    Redis::_decode("object_idletime", redis__object_idletime(to_json($r)))->{value}
+}
+
+## Redis OBJECT REFCOUNT — reference count of $key's value, or undef.
+fn Redis::object_refcount ($key, %opts) {
+    val $r = Redis::_req({ key => $key }, \%opts)
+    Redis::_decode("object_refcount", redis__object_refcount(to_json($r)))->{value}
+}
+
+# ── redis 6.2 / 7.x commands ─────────────────────────────────────────
+
+## Redis GETEX — get $key and adjust its TTL. opts: ex, px, persist.
+fn Redis::getex ($key, %opts) {
+    val $r = Redis::_req(
+        { key => $key, ex => $opts{ex}, px => $opts{px}, persist => ($opts{persist} ? \1 : \0) },
+        \%opts
+    )
+    Redis::_decode("getex", redis__getex(to_json($r)))->{value}
+}
+
+## Redis SMISMEMBER — array of 1/0 per member in $members.
+fn Redis::smismember ($key, $members, %opts) {
+    val $list = ref($members) eq "ARRAY" ? $members : [$members]
+    val $r = Redis::_req({ key => $key, members => $list }, \%opts)
+    @{ Redis::_decode("smismember", redis__smismember(to_json($r)))->{values} }
+}
+
+## Redis SINTERCARD — cardinality of the intersection of $keys; opt `limit`.
+fn Redis::sintercard ($keys, %opts) {
+    val $list = ref($keys) eq "ARRAY" ? $keys : [$keys]
+    val $r = Redis::_req({ keys => $list, limit => $opts{limit} }, \%opts)
+    Redis::_decode("sintercard", redis__sintercard(to_json($r)))->{value}
+}
+
+## Redis LPOS — index of $element in list $key. opts: rank, count (count
+## returns an array of positions; 0 = all matches).
+fn Redis::lpos ($key, $element, %opts) {
+    val $r = Redis::_req(
+        { key => $key, element => $element, rank => $opts{rank}, count => $opts{count} },
+        \%opts
+    )
+    val $o = Redis::_decode("lpos", redis__lpos(to_json($r)))
+    defined $opts{count} ? @{ $o->{values} } : $o->{value}
+}
+
+## Redis LMPOP — pop from the first non-empty list in $keys. opts: from
+## ("LEFT"|"RIGHT", default LEFT), count. Returns [key, [elements]] or undef.
+fn Redis::lmpop ($keys, %opts) {
+    val $list = ref($keys) eq "ARRAY" ? $keys : [$keys]
+    val $r = Redis::_req(
+        { keys => $list, from => ($opts{from} // "LEFT"), count => $opts{count} }, \%opts)
+    Redis::_decode("lmpop", redis__lmpop(to_json($r)))->{value}
+}
+
+## Redis ZMPOP — pop from the first non-empty sorted set in $keys. opts: from
+## ("MIN"|"MAX", default MIN), count. Returns [key, [[member, score], ...]].
+fn Redis::zmpop ($keys, %opts) {
+    val $list = ref($keys) eq "ARRAY" ? $keys : [$keys]
+    val $r = Redis::_req(
+        { keys => $list, from => ($opts{from} // "MIN"), count => $opts{count} }, \%opts)
+    Redis::_decode("zmpop", redis__zmpop(to_json($r)))->{value}
+}
+

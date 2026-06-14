@@ -133,6 +133,23 @@ exports = [
     "redis__memory_usage",
     "redis__echo",
     "redis__pipeline",
+    "redis__wait",
+    "redis__lastsave",
+    "redis__slowlog_get",
+    "redis__slowlog_reset",
+    "redis__client_list",
+    "redis__client_info",
+    "redis__acl_whoami",
+    "redis__acl_list",
+    "redis__acl_cat",
+    "redis__object_idletime",
+    "redis__object_refcount",
+    "redis__getex",
+    "redis__smismember",
+    "redis__sintercard",
+    "redis__lpos",
+    "redis__lmpop",
+    "redis__zmpop",
 ]
 
 [scripts]

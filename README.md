@@ -327,6 +327,27 @@ Redis::raw        \@argv, %opts → \%resp          # arbitrary command
 
 # Pipeline / transaction
 Redis::pipeline   [[CMD,…],…], %opts → @results  # opts: transaction (MULTI/EXEC)
+
+# Server admin + introspection
+Redis::wait            $numreplicas, %opts → $acked   # opts: timeout (ms)
+Redis::lastsave        %opts → $unix_time
+Redis::slowlog_get     %opts → \@entries              # opts: count
+Redis::slowlog_reset   %opts → 1
+Redis::client_list     %opts → $text                  # one line per client
+Redis::client_info     %opts → $text
+Redis::acl_whoami      %opts → $username
+Redis::acl_list        %opts → @rules
+Redis::acl_cat         %opts → @categories            # opts: category
+Redis::object_idletime $key, %opts → $seconds | undef
+Redis::object_refcount $key, %opts → $n | undef
+
+# Redis 6.2 / 7.x
+Redis::getex      $key, %opts → $value | undef        # opts: ex, px, persist
+Redis::smismember $key, $members_or_aref, %opts → @bools
+Redis::sintercard $keys_or_aref, %opts → $n           # opts: limit
+Redis::lpos       $key, $element, %opts → $idx | @idxs # opts: rank, count
+Redis::lmpop      $keys_or_aref, %opts → [key, [elems]] | undef  # opts: from (LEFT|RIGHT), count
+Redis::zmpop      $keys_or_aref, %opts → [key, [[m,score]]] | undef  # opts: from (MIN|MAX), count
 ```
 
 ## [0x05] FFI layer

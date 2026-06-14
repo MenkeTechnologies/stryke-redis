@@ -2009,6 +2009,259 @@ pub extern "C" fn redis__pipeline(args: *const c_char) -> *const c_char {
     })
 }
 
+// ── server admin + introspection ─────────────────────────────────────────────
+
+#[no_mangle]
+pub extern "C" fn redis__wait(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let numreplicas = need_i64(&v, "numreplicas")?;
+        let timeout = v["timeout"].as_i64().unwrap_or(0);
+        with_conn(&v, |c| {
+            let n: i64 = redis::cmd("WAIT").arg(numreplicas).arg(timeout).query(c)?;
+            Ok(json!({"value": n}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__lastsave(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        with_conn(&v, |c| {
+            let n: i64 = redis::cmd("LASTSAVE").query(c)?;
+            Ok(json!({"value": n}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__slowlog_get(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let count = v["count"].as_i64();
+        with_conn(&v, |c| {
+            let mut cmd = redis::cmd("SLOWLOG");
+            cmd.arg("GET");
+            if let Some(n) = count {
+                cmd.arg(n);
+            }
+            let raw: redis::Value = cmd.query(c)?;
+            Ok(json!({"entries": redis_value_to_json(raw)}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__slowlog_reset(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        with_conn(&v, |c| {
+            let r: String = redis::cmd("SLOWLOG").arg("RESET").query(c)?;
+            Ok(json!({"ok": r == "OK"}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__client_list(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        with_conn(&v, |c| {
+            let s: String = redis::cmd("CLIENT").arg("LIST").query(c)?;
+            Ok(json!({"value": s}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__client_info(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        with_conn(&v, |c| {
+            let s: String = redis::cmd("CLIENT").arg("INFO").query(c)?;
+            Ok(json!({"value": s}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__acl_whoami(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        with_conn(&v, |c| {
+            let s: String = redis::cmd("ACL").arg("WHOAMI").query(c)?;
+            Ok(json!({"value": s}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__acl_list(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        with_conn(&v, |c| {
+            let rules: Vec<String> = redis::cmd("ACL").arg("LIST").query(c)?;
+            Ok(json!({"rules": rules}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__acl_cat(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let category = v["category"].as_str();
+        with_conn(&v, |c| {
+            let mut cmd = redis::cmd("ACL");
+            cmd.arg("CAT");
+            if let Some(cat) = category {
+                cmd.arg(cat);
+            }
+            let cats: Vec<String> = cmd.query(c)?;
+            Ok(json!({"categories": cats}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__object_idletime(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        with_conn(&v, |c| {
+            let n: Option<i64> = redis::cmd("OBJECT").arg("IDLETIME").arg(key).query(c)?;
+            Ok(json!({"value": n}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__object_refcount(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        with_conn(&v, |c| {
+            let n: Option<i64> = redis::cmd("OBJECT").arg("REFCOUNT").arg(key).query(c)?;
+            Ok(json!({"value": n}))
+        })
+    })
+}
+
+// ── redis 6.2 / 7.x commands ─────────────────────────────────────────────────
+
+#[no_mangle]
+pub extern "C" fn redis__getex(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let ex = v["ex"].as_i64();
+        let px = v["px"].as_i64();
+        let persist = v["persist"].as_bool().unwrap_or(false);
+        with_conn(&v, |c| {
+            let mut cmd = redis::cmd("GETEX");
+            cmd.arg(key);
+            if let Some(s) = ex {
+                cmd.arg("EX").arg(s);
+            } else if let Some(ms) = px {
+                cmd.arg("PX").arg(ms);
+            } else if persist {
+                cmd.arg("PERSIST");
+            }
+            let val: Option<String> = cmd.query(c)?;
+            Ok(json!({"value": val}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__smismember(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let members = string_vec(&v["members"])?;
+        with_conn(&v, |c| {
+            let bits: Vec<i64> = redis::cmd("SMISMEMBER").arg(key).arg(&members).query(c)?;
+            Ok(json!({"values": bits.iter().map(|n| *n != 0).collect::<Vec<bool>>()}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__sintercard(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let keys = string_vec(&v["keys"])?;
+        let limit = v["limit"].as_i64();
+        with_conn(&v, |c| {
+            let mut cmd = redis::cmd("SINTERCARD");
+            cmd.arg(keys.len()).arg(&keys);
+            if let Some(l) = limit {
+                cmd.arg("LIMIT").arg(l);
+            }
+            let n: i64 = cmd.query(c)?;
+            Ok(json!({"value": n}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__lpos(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let element = need_str(&v, "element")?;
+        let rank = v["rank"].as_i64();
+        let count = v["count"].as_i64();
+        with_conn(&v, |c| {
+            let mut cmd = redis::cmd("LPOS");
+            cmd.arg(key).arg(element);
+            if let Some(r) = rank {
+                cmd.arg("RANK").arg(r);
+            }
+            if let Some(n) = count {
+                // COUNT returns an array of positions (0 = all matches).
+                cmd.arg("COUNT").arg(n);
+                let positions: Vec<i64> = cmd.query(c)?;
+                Ok(json!({"values": positions}))
+            } else {
+                let pos: Option<i64> = cmd.query(c)?;
+                Ok(json!({"value": pos}))
+            }
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__lmpop(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let keys = string_vec(&v["keys"])?;
+        let from = if v["from"].as_str() == Some("RIGHT") {
+            "RIGHT"
+        } else {
+            "LEFT"
+        };
+        let count = v["count"].as_i64();
+        with_conn(&v, |c| {
+            let mut cmd = redis::cmd("LMPOP");
+            cmd.arg(keys.len()).arg(&keys).arg(from);
+            if let Some(n) = count {
+                cmd.arg("COUNT").arg(n);
+            }
+            // Reply: [key, [elem, ...]] or nil.
+            let raw: redis::Value = cmd.query(c)?;
+            Ok(json!({"value": redis_value_to_json(raw)}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__zmpop(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let keys = string_vec(&v["keys"])?;
+        let from = if v["from"].as_str() == Some("MAX") {
+            "MAX"
+        } else {
+            "MIN"
+        };
+        let count = v["count"].as_i64();
+        with_conn(&v, |c| {
+            let mut cmd = redis::cmd("ZMPOP");
+            cmd.arg(keys.len()).arg(&keys).arg(from);
+            if let Some(n) = count {
+                cmd.arg("COUNT").arg(n);
+            }
+            let raw: redis::Value = cmd.query(c)?;
+            Ok(json!({"value": redis_value_to_json(raw)}))
+        })
+    })
+}
+
 // ── helpers ─────────────────────────────────────────────────────────────────
 
 /// Fetch a required string field, erroring with the field name when absent.
