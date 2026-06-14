@@ -150,6 +150,12 @@ exports = [
     "redis__lpos",
     "redis__lmpop",
     "redis__zmpop",
+    "redis__hscan",
+    "redis__sscan",
+    "redis__zscan",
+    "redis__xgroup_create",
+    "redis__xack",
+    "redis__xinfo_stream",
 ]
 
 [scripts]

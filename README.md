@@ -325,6 +325,16 @@ Redis::echo       $message, %opts → $message
 Redis::ping       %opts → 1 | ""
 Redis::raw        \@argv, %opts → \%resp          # arbitrary command
 
+# Cursor scans (iterate internally; return everything)
+Redis::hscan      $key, %opts → %hash             # opts: match, count
+Redis::sscan      $key, %opts → @members          # opts: match, count
+Redis::zscan      $key, %opts → @pairs            # opts: match, count
+
+# Stream consumer groups
+Redis::xgroup_create $key, $group, %opts → 1      # opts: id (default $), mkstream
+Redis::xack          $key, $group, $ids_or_aref, %opts → $count
+Redis::xinfo_stream  $key, %opts → \%info
+
 # Pipeline / transaction
 Redis::pipeline   [[CMD,…],…], %opts → @results  # opts: transaction (MULTI/EXEC)
 

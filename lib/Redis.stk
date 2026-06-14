@@ -1052,3 +1052,48 @@ fn Redis::zmpop ($keys, %opts) {
     Redis::_decode("zmpop", redis__zmpop(to_json($r)))->{value}
 }
 
+# ── cursor scans (hash / set / zset) ─────────────────────────────────
+
+## Redis HSCAN — full hash as a flat list (use as %h). opts: match, count.
+## Iterates the cursor internally, so it returns every matching field.
+fn Redis::hscan ($key, %opts) {
+    val $r = Redis::_req({ key => $key, match => $opts{match}, count => $opts{count} }, \%opts)
+    %{ Redis::_decode("hscan", redis__hscan(to_json($r)))->{hash} }
+}
+
+## Redis SSCAN — all matching set members. opts: match, count.
+fn Redis::sscan ($key, %opts) {
+    val $r = Redis::_req({ key => $key, match => $opts{match}, count => $opts{count} }, \%opts)
+    @{ Redis::_decode("sscan", redis__sscan(to_json($r)))->{members} }
+}
+
+## Redis ZSCAN — all matching [member, score] pairs. opts: match, count.
+fn Redis::zscan ($key, %opts) {
+    val $r = Redis::_req({ key => $key, match => $opts{match}, count => $opts{count} }, \%opts)
+    @{ Redis::_decode("zscan", redis__zscan(to_json($r)))->{pairs} }
+}
+
+# ── stream consumer groups ───────────────────────────────────────────
+
+## Redis XGROUP CREATE — create consumer group $group on $key at $id (default
+## "$" = only-new). opt `mkstream => 1` creates the stream if absent. Returns 1.
+fn Redis::xgroup_create ($key, $group, %opts) {
+    val $r = Redis::_req(
+        { key => $key, group => $group, id => ($opts{id} // "\$"),
+          mkstream => ($opts{mkstream} ? \1 : \0) }, \%opts)
+    Redis::_decode("xgroup_create", redis__xgroup_create(to_json($r)))->{ok}
+}
+
+## Redis XACK — acknowledge $ids in consumer group $group on $key; count acked.
+fn Redis::xack ($key, $group, $ids, %opts) {
+    val $list = ref($ids) eq "ARRAY" ? $ids : [$ids]
+    val $r = Redis::_req({ key => $key, group => $group, ids => $list }, \%opts)
+    Redis::_decode("xack", redis__xack(to_json($r)))->{value}
+}
+
+## Redis XINFO STREAM — stream metadata (length, last-generated-id, groups, …).
+fn Redis::xinfo_stream ($key, %opts) {
+    val $r = Redis::_req({ key => $key }, \%opts)
+    Redis::_decode("xinfo_stream", redis__xinfo_stream(to_json($r)))->{info}
+}
+

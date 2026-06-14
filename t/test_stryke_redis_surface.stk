@@ -161,4 +161,11 @@ assert_ok exists &Redis::lpos, "Redis::lpos exists"
 assert_ok exists &Redis::lmpop, "Redis::lmpop exists"
 assert_ok exists &Redis::zmpop, "Redis::zmpop exists"
 
+assert_ok exists &Redis::hscan, "Redis::hscan exists"
+assert_ok exists &Redis::sscan, "Redis::sscan exists"
+assert_ok exists &Redis::zscan, "Redis::zscan exists"
+assert_ok exists &Redis::xgroup_create, "Redis::xgroup_create exists"
+assert_ok exists &Redis::xack, "Redis::xack exists"
+assert_ok exists &Redis::xinfo_stream, "Redis::xinfo_stream exists"
+
 test_run

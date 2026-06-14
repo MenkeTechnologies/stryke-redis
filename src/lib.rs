@@ -2262,6 +2262,153 @@ pub extern "C" fn redis__zmpop(args: *const c_char) -> *const c_char {
     })
 }
 
+// ── cursor scans (hash / set / zset) ─────────────────────────────────────────
+
+#[no_mangle]
+pub extern "C" fn redis__hscan(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let match_pat = v["match"].as_str();
+        let count = v["count"].as_i64();
+        with_conn(&v, |c| {
+            let mut cur: u64 = 0;
+            let mut map = serde_json::Map::new();
+            loop {
+                let mut cmd = redis::cmd("HSCAN");
+                cmd.arg(key).arg(cur);
+                if let Some(p) = match_pat {
+                    cmd.arg("MATCH").arg(p);
+                }
+                if let Some(n) = count {
+                    cmd.arg("COUNT").arg(n);
+                }
+                // Reply: (next_cursor, [field, value, field, value, ...]).
+                let (next, flat): (u64, Vec<String>) = cmd.query(c)?;
+                for pair in flat.chunks(2) {
+                    if pair.len() == 2 {
+                        map.insert(pair[0].clone(), Value::String(pair[1].clone()));
+                    }
+                }
+                cur = next;
+                if cur == 0 {
+                    break;
+                }
+            }
+            Ok(json!({ "hash": map }))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__sscan(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let match_pat = v["match"].as_str();
+        let count = v["count"].as_i64();
+        with_conn(&v, |c| {
+            let mut cur: u64 = 0;
+            let mut out: Vec<String> = Vec::new();
+            loop {
+                let mut cmd = redis::cmd("SSCAN");
+                cmd.arg(key).arg(cur);
+                if let Some(p) = match_pat {
+                    cmd.arg("MATCH").arg(p);
+                }
+                if let Some(n) = count {
+                    cmd.arg("COUNT").arg(n);
+                }
+                let (next, batch): (u64, Vec<String>) = cmd.query(c)?;
+                out.extend(batch);
+                cur = next;
+                if cur == 0 {
+                    break;
+                }
+            }
+            Ok(json!({ "members": out }))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__zscan(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let match_pat = v["match"].as_str();
+        let count = v["count"].as_i64();
+        with_conn(&v, |c| {
+            let mut cur: u64 = 0;
+            let mut pairs: Vec<(String, String)> = Vec::new();
+            loop {
+                let mut cmd = redis::cmd("ZSCAN");
+                cmd.arg(key).arg(cur);
+                if let Some(p) = match_pat {
+                    cmd.arg("MATCH").arg(p);
+                }
+                if let Some(n) = count {
+                    cmd.arg("COUNT").arg(n);
+                }
+                // Reply: (next, [member, score, member, score, ...]).
+                let (next, flat): (u64, Vec<String>) = cmd.query(c)?;
+                for ch in flat.chunks(2) {
+                    if ch.len() == 2 {
+                        pairs.push((ch[0].clone(), ch[1].clone()));
+                    }
+                }
+                cur = next;
+                if cur == 0 {
+                    break;
+                }
+            }
+            Ok(json!({ "pairs": pairs }))
+        })
+    })
+}
+
+// ── stream consumer groups (non-blocking parts) ──────────────────────────────
+
+#[no_mangle]
+pub extern "C" fn redis__xgroup_create(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let group = need_str(&v, "group")?;
+        let id = v["id"].as_str().unwrap_or("$");
+        let mkstream = v["mkstream"].as_bool().unwrap_or(false);
+        with_conn(&v, |c| {
+            let mut cmd = redis::cmd("XGROUP");
+            cmd.arg("CREATE").arg(key).arg(group).arg(id);
+            if mkstream {
+                cmd.arg("MKSTREAM");
+            }
+            let r: String = cmd.query(c)?;
+            Ok(json!({"ok": r == "OK"}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__xack(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let group = need_str(&v, "group")?;
+        let ids = string_vec(&v["ids"])?;
+        with_conn(&v, |c| {
+            let n: i64 = redis::cmd("XACK").arg(key).arg(group).arg(&ids).query(c)?;
+            Ok(json!({"value": n}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__xinfo_stream(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        with_conn(&v, |c| {
+            let raw: redis::Value = redis::cmd("XINFO").arg("STREAM").arg(key).query(c)?;
+            Ok(json!({"info": redis_value_to_json(raw)}))
+        })
+    })
+}
+
 // ── helpers ─────────────────────────────────────────────────────────────────
 
 /// Fetch a required string field, erroring with the field name when absent.
