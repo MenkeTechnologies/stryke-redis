@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
-  <meta name="description" content="stryke-redis — REDIS / VALKEY CLIENT FOR STRYKE // KV + LISTS + SETS + HASHES + ZSETS + PUB/SUB + SCAN. Redis / Valkey client for stryke. KV, lists, sets, hashes, sorted sets, pub/sub publish, scan, server admin. Opt-in package.">
+  <meta name="description" content="stryke-redis — REDIS / VALKEY CLIENT FOR STRYKE // KV + LISTS + SETS + HASHES + ZSETS + PUB/SUB + SCAN. Redis / Valkey client for stryke. KV, lists, sets, hashes, sorted sets, pub/sub publish, scan, server admin. Opt-in package — ships as a Rust cdylib that stryke dlopens in-process on first `use Redis`.">
   <title>stryke-redis — Documentation</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -86,7 +86,7 @@
             <span class="sep">/</span>
             <a href="https://github.com/MenkeTechnologies/MenkeTechnologiesMeta" target="_blank" rel="noopener noreferrer">Meta</a>
           </nav>
-          <p class="docs-build-line">stryke package · CLI launcher <code>redis</code> · Rust helper <code>stryke-redis-helper</code> · opt-in (kept out of stryke core)</p>
+          <p class="docs-build-line">stryke package · cdylib <code>libstryke_redis.{dylib,so}</code> · dlopen'd in-process on <code>use Redis</code> · opt-in (kept out of stryke core)</p>
         </div>
         <div class="tutorial-toolbar">
           <button type="button" class="btn btn-secondary" id="btnTheme" title="Toggle light/dark">Theme</button>
@@ -112,56 +112,57 @@
 
       <section class="tutorial-section">
         <h2>Install</h2>
-<pre># build the helper binary, install as a stryke package
+<pre># from a release (no rustc on the consumer machine)
+s pkg install -g github.com/MenkeTechnologies/stryke-redis
+
+# from a local checkout
 cd ~/projects/stryke-redis
-cargo build --release
-s pkg install -g .
+cargo build --release            # produces target/release/libstryke_redis.{dylib,so}
+s pkg install -g .               # cdylib lands in ~/.stryke/store/redis@&lt;version&gt;/
 
 # one-liner
-make install
-
-# verify
-redis --help</pre>
-        <p>After install, <code>redis --help</code> works from anywhere on PATH (assuming <code>~/.stryke/bin/</code> is on PATH). The stryke library is auto-discoverable to any project that depends on the package via <code>[deps] redis = { path = "..." }</code> or, when published, by name.</p>
+make install</pre>
+        <p>The cdylib is dlopened in-process on first <code>use Redis</code> &mdash; no helper-binary fork per call. Any stryke script that declares <code>use Redis</code> resolves the package automatically.</p>
       </section>
 
       <section class="tutorial-section">
-        <h2>CLI: <code>redis</code></h2>
+        <h2>Quick start: <code>use Redis</code></h2>
         <table class="example-tbl">
           <tbody>
-            <tr><td>get / set</td><td><code>redis set my:key 'hello' && redis get my:key</code></td></tr>
-            <tr><td>scan keys</td><td><code>redis scan 'user:*'</code></td></tr>
-            <tr><td>list operations</td><td><code>redis lpush queue:work '{"job":"a"}' && redis rpop queue:work</code></td></tr>
-            <tr><td>hash operations</td><td><code>redis hset user:42 name Alice email alice@x</code></td></tr>
-            <tr><td>publish to channel</td><td><code>redis publish events.user '{"id":42}'</code></td></tr>
-            <tr><td>subscribe (stream NDJSON)</td><td><code>redis subscribe events.user --json</code></td></tr>
-            <tr><td>server INFO</td><td><code>redis info server</code></td></tr>
+            <tr><td>get / set</td><td><code>Redis::set "greeting", "hello from stryke"; p Redis::get "greeting"</code></td></tr>
+            <tr><td>TTL on set</td><td><code>Redis::set "session:42", "...", ex =&gt; 3600</code></td></tr>
+            <tr><td>counters</td><td><code>my $n = Redis::incr "page-views", by =&gt; 5</code></td></tr>
+            <tr><td>lists / queues</td><td><code>Redis::lpush "events", ["a","b","c"]; my $next = Redis::rpop "events"</code></td></tr>
+            <tr><td>sets / dedup</td><td><code>Redis::sadd "seen-users", ["alice"]; p Redis::sismember "seen-users", "alice"</code></td></tr>
+            <tr><td>hash objects</td><td><code>Redis::hmset "user:42", { name =&gt; "alice", role =&gt; "admin" }</code></td></tr>
+            <tr><td>sorted set / leaderboard</td><td><code>Redis::zadd "leaderboard", { alice =&gt; 100, bob =&gt; 200 }</code></td></tr>
+            <tr><td>publish to channel</td><td><code>Redis::publish "events", "new user signed up"</code></td></tr>
+            <tr><td>scan keys</td><td><code>my @keys = Redis::scan match =&gt; "session:*", count =&gt; 100</code></td></tr>
+            <tr><td>server INFO</td><td><code>p to_json Redis::info section =&gt; "memory"</code></td></tr>
           </tbody>
         </table>
-        <p>The full flag matrix lives in the <a href="https://github.com/MenkeTechnologies/stryke-redis#0x03-cli-redis">README "CLI" section</a>.</p>
+        <p>The full API lives in the <a href="https://github.com/MenkeTechnologies/stryke-redis#0x04-api-reference-selected">README "API reference" section</a>.</p>
       </section>
 
       <section class="tutorial-section">
         <h2>Why a package, not a builtin</h2>
         <p><code>redis</code> Rust crate (sync) with rustls TLS. Single highest-leverage daily-use connector after Postgres / MySQL.</p>
-        <p>The stryke side is a thin NDJSON-pipe wrapper; the heavy code lives in the <code>stryke-redis-helper</code> sidecar binary and is loaded on demand. Core stryke is never linked against this package's deps.</p>
+        <p>The stryke side is a thin <code>.stk</code> wrapper that calls <code>redis__*</code> FFI symbols on the cdylib; the heavy code lives in <code>libstryke_redis.{dylib,so}</code>, dlopened in-process on first <code>use Redis</code>. Core stryke is never linked against this package's deps.</p>
       </section>
 
       <section class="tutorial-section">
-        <h2>Helper protocol</h2>
-        <p>The <code>stryke-redis-helper</code> sidecar speaks newline-delimited JSON over stdin/stdout. The stryke library shells out per call and pipes structured data both ways. This keeps stryke startup small while making the package's surface area available on demand.</p>
-<pre># manual invocation (debugging only)
-echo '{"op":"version"}' | stryke-redis-helper</pre>
+        <h2>FFI layer</h2>
+        <p>Each <code>Redis::*</code> wrapper builds a JSON args dict and calls a sibling <code>redis__*</code> symbol resolved out of <code>libstryke_redis.{dylib,so}</code>. The cdylib is dlopened in-process on first <code>use Redis</code> and caches one <code>redis::Connection</code> per <code>(url, db, auth)</code> tuple in <code>OnceCell&lt;Mutex&lt;HashMap&gt;&gt;</code> for the life of the stryke process &mdash; back-to-back calls reuse the same TCP socket, no handshake-per-call. Responses are JSON; errors come back as <code>{"error": "&lt;msg&gt;"}</code> and the wrapper <code>die</code>s with the message.</p>
       </section>
 
       <section class="tutorial-section">
         <h2>Layout</h2>
 <pre>stryke-redis/
-&#9500;&#9472;&#9472; Cargo.toml             # bin = stryke-redis-helper (publish = false)
+&#9500;&#9472;&#9472; Cargo.toml             # cdylib crate manifest (crate-type = ["cdylib"], publish = false)
 &#9500;&#9472;&#9472; src/
-&#9474;   &#9492;&#9472;&#9472; main.rs           # helper binary entry point
-&#9500;&#9472;&#9472; lib/                   # stryke .stk wrapper(s)
-&#9500;&#9472;&#9472; stryke.toml            # stryke package manifest
+&#9474;   &#9492;&#9472;&#9472; lib.rs            # cdylib — redis__* extern "C" exports + persistent conn cache
+&#9500;&#9472;&#9472; lib/                   # stryke .stk wrapper(s) — `use Redis`
+&#9500;&#9472;&#9472; stryke.toml            # stryke package manifest ([ffi] exports table)
 &#9500;&#9472;&#9472; t/                     # zunit-style tests
 &#9500;&#9472;&#9472; examples/              # runnable .stk examples
 &#9500;&#9472;&#9472; Makefile               # `make install` builds + installs
