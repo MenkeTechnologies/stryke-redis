@@ -828,7 +828,1257 @@ pub extern "C" fn redis__raw(args: *const c_char) -> *const c_char {
     })
 }
 
+// ── key management ───────────────────────────────────────────────────────────
+
+#[no_mangle]
+pub extern "C" fn redis__rename(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let newkey = need_str(&v, "newkey")?;
+        with_conn(&v, |c| {
+            let r: String = redis::cmd("RENAME").arg(key).arg(newkey).query(c)?;
+            Ok(json!({"ok": r == "OK"}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__renamenx(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let newkey = need_str(&v, "newkey")?;
+        with_conn(&v, |c| {
+            let n: i64 = redis::cmd("RENAMENX").arg(key).arg(newkey).query(c)?;
+            Ok(json!({"value": n != 0}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__persist(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        with_conn(&v, |c| {
+            let n: i64 = redis::cmd("PERSIST").arg(key).query(c)?;
+            Ok(json!({"value": n}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__pexpire(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let ms = need_i64(&v, "millis")?;
+        with_conn(&v, |c| {
+            let n: i64 = redis::cmd("PEXPIRE").arg(key).arg(ms).query(c)?;
+            Ok(json!({"value": n}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__pttl(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        with_conn(&v, |c| {
+            let n: i64 = redis::cmd("PTTL").arg(key).query(c)?;
+            Ok(json!({"value": n}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__expireat(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let ts = need_i64(&v, "timestamp")?;
+        with_conn(&v, |c| {
+            let n: i64 = redis::cmd("EXPIREAT").arg(key).arg(ts).query(c)?;
+            Ok(json!({"value": n}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__pexpireat(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let ts = need_i64(&v, "millis_timestamp")?;
+        with_conn(&v, |c| {
+            let n: i64 = redis::cmd("PEXPIREAT").arg(key).arg(ts).query(c)?;
+            Ok(json!({"value": n}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__expiretime(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        with_conn(&v, |c| {
+            let n: i64 = redis::cmd("EXPIRETIME").arg(key).query(c)?;
+            Ok(json!({"value": n}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__randomkey(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        with_conn(&v, |c| {
+            let k: Option<String> = redis::cmd("RANDOMKEY").query(c)?;
+            Ok(json!({"value": k}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__touch(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let keys = string_vec(&v["keys"])?;
+        with_conn(&v, |c| {
+            let n: i64 = redis::cmd("TOUCH").arg(&keys).query(c)?;
+            Ok(json!({"value": n}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__unlink(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let keys = string_vec(&v["keys"])?;
+        with_conn(&v, |c| {
+            let n: i64 = redis::cmd("UNLINK").arg(&keys).query(c)?;
+            Ok(json!({"value": n}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__copy(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let source = need_str(&v, "source")?;
+        let dest = need_str(&v, "destination")?;
+        let replace = v["replace"].as_bool().unwrap_or(false);
+        let db = v["destination_db"].as_i64();
+        with_conn(&v, |c| {
+            let mut cmd = redis::cmd("COPY");
+            cmd.arg(source).arg(dest);
+            if let Some(d) = db {
+                cmd.arg("DB").arg(d);
+            }
+            if replace {
+                cmd.arg("REPLACE");
+            }
+            let n: i64 = cmd.query(c)?;
+            Ok(json!({"value": n != 0}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__object_encoding(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        with_conn(&v, |c| {
+            let e: Option<String> = redis::cmd("OBJECT").arg("ENCODING").arg(key).query(c)?;
+            Ok(json!({"value": e}))
+        })
+    })
+}
+
+// ── string extras ────────────────────────────────────────────────────────────
+
+#[no_mangle]
+pub extern "C" fn redis__getset(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let value = need_str(&v, "value")?;
+        with_conn(&v, |c| {
+            let old: Option<String> = redis::cmd("GETSET").arg(key).arg(value).query(c)?;
+            Ok(json!({"value": old}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__getdel(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        with_conn(&v, |c| {
+            let old: Option<String> = redis::cmd("GETDEL").arg(key).query(c)?;
+            Ok(json!({"value": old}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__append(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let value = need_str(&v, "value")?;
+        with_conn(&v, |c| {
+            let n: i64 = redis::cmd("APPEND").arg(key).arg(value).query(c)?;
+            Ok(json!({"value": n}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__strlen(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        with_conn(&v, |c| {
+            let n: i64 = redis::cmd("STRLEN").arg(key).query(c)?;
+            Ok(json!({"value": n}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__setex(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let value = need_str(&v, "value")?;
+        let secs = need_i64(&v, "seconds")?;
+        let px = v["px"].as_bool().unwrap_or(false);
+        with_conn(&v, |c| {
+            let r: String = redis::cmd(if px { "PSETEX" } else { "SETEX" })
+                .arg(key)
+                .arg(secs)
+                .arg(value)
+                .query(c)?;
+            Ok(json!({"ok": r == "OK"}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__setnx(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let value = need_str(&v, "value")?;
+        with_conn(&v, |c| {
+            let n: i64 = redis::cmd("SETNX").arg(key).arg(value).query(c)?;
+            Ok(json!({"value": n != 0}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__getrange(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let start = need_i64(&v, "start")?;
+        let end = need_i64(&v, "end")?;
+        with_conn(&v, |c| {
+            let s: String = redis::cmd("GETRANGE")
+                .arg(key)
+                .arg(start)
+                .arg(end)
+                .query(c)?;
+            Ok(json!({"value": s}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__setrange(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let offset = need_i64(&v, "offset")?;
+        let value = need_str(&v, "value")?;
+        with_conn(&v, |c| {
+            let n: i64 = redis::cmd("SETRANGE")
+                .arg(key)
+                .arg(offset)
+                .arg(value)
+                .query(c)?;
+            Ok(json!({"value": n}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__incrbyfloat(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let by = v["by"].as_f64().ok_or_else(|| anyhow!("missing by"))?;
+        with_conn(&v, |c| {
+            let n: f64 = redis::cmd("INCRBYFLOAT").arg(key).arg(by).query(c)?;
+            Ok(json!({"value": n}))
+        })
+    })
+}
+
+// ── bitmaps ──────────────────────────────────────────────────────────────────
+
+#[no_mangle]
+pub extern "C" fn redis__setbit(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let offset = need_i64(&v, "offset")?;
+        let bit = need_i64(&v, "bit")?;
+        with_conn(&v, |c| {
+            let n: i64 = redis::cmd("SETBIT")
+                .arg(key)
+                .arg(offset)
+                .arg(bit)
+                .query(c)?;
+            Ok(json!({"value": n}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__getbit(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let offset = need_i64(&v, "offset")?;
+        with_conn(&v, |c| {
+            let n: i64 = redis::cmd("GETBIT").arg(key).arg(offset).query(c)?;
+            Ok(json!({"value": n}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__bitcount(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let start = v["start"].as_i64();
+        let end = v["end"].as_i64();
+        with_conn(&v, |c| {
+            let mut cmd = redis::cmd("BITCOUNT");
+            cmd.arg(key);
+            if let (Some(s), Some(e)) = (start, end) {
+                cmd.arg(s).arg(e);
+            }
+            let n: i64 = cmd.query(c)?;
+            Ok(json!({"value": n}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__bitop(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let op = need_str(&v, "operation")?;
+        let dest = need_str(&v, "destination")?;
+        let keys = string_vec(&v["keys"])?;
+        with_conn(&v, |c| {
+            let n: i64 = redis::cmd("BITOP").arg(op).arg(dest).arg(&keys).query(c)?;
+            Ok(json!({"value": n}))
+        })
+    })
+}
+
+// ── list extras ──────────────────────────────────────────────────────────────
+
+#[no_mangle]
+pub extern "C" fn redis__lindex(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let index = need_i64(&v, "index")?;
+        with_conn(&v, |c| {
+            let val: Option<String> = redis::cmd("LINDEX").arg(key).arg(index).query(c)?;
+            Ok(json!({"value": val}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__lset(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let index = need_i64(&v, "index")?;
+        let value = need_str(&v, "value")?;
+        with_conn(&v, |c| {
+            let r: String = redis::cmd("LSET").arg(key).arg(index).arg(value).query(c)?;
+            Ok(json!({"ok": r == "OK"}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__linsert(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let before = v["before"].as_bool().unwrap_or(false);
+        let pivot = need_str(&v, "pivot")?;
+        let value = need_str(&v, "value")?;
+        with_conn(&v, |c| {
+            let n: i64 = redis::cmd("LINSERT")
+                .arg(key)
+                .arg(if before { "BEFORE" } else { "AFTER" })
+                .arg(pivot)
+                .arg(value)
+                .query(c)?;
+            Ok(json!({"value": n}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__lrem(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let count = need_i64(&v, "count")?;
+        let value = need_str(&v, "value")?;
+        with_conn(&v, |c| {
+            let n: i64 = redis::cmd("LREM").arg(key).arg(count).arg(value).query(c)?;
+            Ok(json!({"value": n}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__ltrim(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let start = need_i64(&v, "start")?;
+        let stop = need_i64(&v, "stop")?;
+        with_conn(&v, |c| {
+            let r: String = redis::cmd("LTRIM").arg(key).arg(start).arg(stop).query(c)?;
+            Ok(json!({"ok": r == "OK"}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__rpoplpush(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let source = need_str(&v, "source")?;
+        let dest = need_str(&v, "destination")?;
+        with_conn(&v, |c| {
+            let val: Option<String> = redis::cmd("RPOPLPUSH").arg(source).arg(dest).query(c)?;
+            Ok(json!({"value": val}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__lmove(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let source = need_str(&v, "source")?;
+        let dest = need_str(&v, "destination")?;
+        let from = if v["from"].as_str() == Some("RIGHT") {
+            "RIGHT"
+        } else {
+            "LEFT"
+        };
+        let to = if v["to"].as_str() == Some("RIGHT") {
+            "RIGHT"
+        } else {
+            "LEFT"
+        };
+        with_conn(&v, |c| {
+            let val: Option<String> = redis::cmd("LMOVE")
+                .arg(source)
+                .arg(dest)
+                .arg(from)
+                .arg(to)
+                .query(c)?;
+            Ok(json!({"value": val}))
+        })
+    })
+}
+
+// ── hash extras ──────────────────────────────────────────────────────────────
+
+#[no_mangle]
+pub extern "C" fn redis__hexists(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let field = need_str(&v, "field")?;
+        with_conn(&v, |c| {
+            let n: i64 = redis::cmd("HEXISTS").arg(key).arg(field).query(c)?;
+            Ok(json!({"value": n != 0}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__hincrby(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let field = need_str(&v, "field")?;
+        let by = need_i64(&v, "by")?;
+        let float = v["float"].as_bool().unwrap_or(false);
+        with_conn(&v, |c| {
+            if float {
+                let by_f = v["by"].as_f64().unwrap_or(by as f64);
+                let n: f64 = redis::cmd("HINCRBYFLOAT")
+                    .arg(key)
+                    .arg(field)
+                    .arg(by_f)
+                    .query(c)?;
+                Ok(json!({"value": n}))
+            } else {
+                let n: i64 = redis::cmd("HINCRBY").arg(key).arg(field).arg(by).query(c)?;
+                Ok(json!({"value": n}))
+            }
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__hlen(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        with_conn(&v, |c| {
+            let n: i64 = redis::cmd("HLEN").arg(key).query(c)?;
+            Ok(json!({"value": n}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__hsetnx(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let field = need_str(&v, "field")?;
+        let value = need_str(&v, "value")?;
+        with_conn(&v, |c| {
+            let n: i64 = redis::cmd("HSETNX")
+                .arg(key)
+                .arg(field)
+                .arg(value)
+                .query(c)?;
+            Ok(json!({"value": n != 0}))
+        })
+    })
+}
+
+// ── set extras ───────────────────────────────────────────────────────────────
+
+#[no_mangle]
+pub extern "C" fn redis__spop(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let count = v["count"].as_i64();
+        with_conn(&v, |c| match count {
+            Some(n) => {
+                let vals: Vec<String> = redis::cmd("SPOP").arg(key).arg(n).query(c)?;
+                Ok(json!({"members": vals}))
+            }
+            None => {
+                let val: Option<String> = redis::cmd("SPOP").arg(key).query(c)?;
+                Ok(json!({"value": val}))
+            }
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__srandmember(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let count = v["count"].as_i64();
+        with_conn(&v, |c| match count {
+            Some(n) => {
+                let vals: Vec<String> = redis::cmd("SRANDMEMBER").arg(key).arg(n).query(c)?;
+                Ok(json!({"members": vals}))
+            }
+            None => {
+                let val: Option<String> = redis::cmd("SRANDMEMBER").arg(key).query(c)?;
+                Ok(json!({"value": val}))
+            }
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__smove(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let source = need_str(&v, "source")?;
+        let dest = need_str(&v, "destination")?;
+        let member = need_str(&v, "member")?;
+        with_conn(&v, |c| {
+            let n: i64 = redis::cmd("SMOVE")
+                .arg(source)
+                .arg(dest)
+                .arg(member)
+                .query(c)?;
+            Ok(json!({"value": n != 0}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__sinter(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| set_combine(&v, "SINTER"))
+}
+
+#[no_mangle]
+pub extern "C" fn redis__sunion(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| set_combine(&v, "SUNION"))
+}
+
+#[no_mangle]
+pub extern "C" fn redis__sdiff(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| set_combine(&v, "SDIFF"))
+}
+
+// ── sorted set extras ────────────────────────────────────────────────────────
+
+#[no_mangle]
+pub extern "C" fn redis__zincrby(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let by = v["by"].as_f64().ok_or_else(|| anyhow!("missing by"))?;
+        let member = need_str(&v, "member")?;
+        with_conn(&v, |c| {
+            let n: f64 = redis::cmd("ZINCRBY")
+                .arg(key)
+                .arg(by)
+                .arg(member)
+                .query(c)?;
+            Ok(json!({"value": n}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__zrank(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let member = need_str(&v, "member")?;
+        let rev = v["rev"].as_bool().unwrap_or(false);
+        with_conn(&v, |c| {
+            let n: Option<i64> = redis::cmd(if rev { "ZREVRANK" } else { "ZRANK" })
+                .arg(key)
+                .arg(member)
+                .query(c)?;
+            Ok(json!({"value": n}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__zcount(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let min = arg_str(&v["min"]).unwrap_or_else(|| "-inf".to_string());
+        let max = arg_str(&v["max"]).unwrap_or_else(|| "+inf".to_string());
+        with_conn(&v, |c| {
+            let n: i64 = redis::cmd("ZCOUNT").arg(key).arg(min).arg(max).query(c)?;
+            Ok(json!({"value": n}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__zrangebyscore(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let min = arg_str(&v["min"]).unwrap_or_else(|| "-inf".to_string());
+        let max = arg_str(&v["max"]).unwrap_or_else(|| "+inf".to_string());
+        let with_scores = v["with_scores"].as_bool().unwrap_or(false);
+        let rev = v["rev"].as_bool().unwrap_or(false);
+        let limit_offset = v["limit_offset"].as_i64();
+        let limit_count = v["limit_count"].as_i64();
+        with_conn(&v, |c| {
+            let mut cmd = redis::cmd(if rev {
+                "ZREVRANGEBYSCORE"
+            } else {
+                "ZRANGEBYSCORE"
+            });
+            if rev {
+                cmd.arg(key).arg(max).arg(min);
+            } else {
+                cmd.arg(key).arg(min).arg(max);
+            }
+            if with_scores {
+                cmd.arg("WITHSCORES");
+            }
+            if let (Some(o), Some(n)) = (limit_offset, limit_count) {
+                cmd.arg("LIMIT").arg(o).arg(n);
+            }
+            if with_scores {
+                let pairs: Vec<(String, f64)> = cmd.query(c)?;
+                Ok(json!({"pairs": pairs}))
+            } else {
+                let vals: Vec<String> = cmd.query(c)?;
+                Ok(json!({"values": vals}))
+            }
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__zpopmin(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| zpop(&v, "ZPOPMIN"))
+}
+
+#[no_mangle]
+pub extern "C" fn redis__zpopmax(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| zpop(&v, "ZPOPMAX"))
+}
+
+#[no_mangle]
+pub extern "C" fn redis__zremrangebyrank(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let start = need_i64(&v, "start")?;
+        let stop = need_i64(&v, "stop")?;
+        with_conn(&v, |c| {
+            let n: i64 = redis::cmd("ZREMRANGEBYRANK")
+                .arg(key)
+                .arg(start)
+                .arg(stop)
+                .query(c)?;
+            Ok(json!({"value": n}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__zremrangebyscore(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let min = arg_str(&v["min"]).unwrap_or_else(|| "-inf".to_string());
+        let max = arg_str(&v["max"]).unwrap_or_else(|| "+inf".to_string());
+        with_conn(&v, |c| {
+            let n: i64 = redis::cmd("ZREMRANGEBYSCORE")
+                .arg(key)
+                .arg(min)
+                .arg(max)
+                .query(c)?;
+            Ok(json!({"value": n}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__zmscore(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let members = string_vec(&v["members"])?;
+        with_conn(&v, |c| {
+            let scores: Vec<Option<f64>> = redis::cmd("ZMSCORE").arg(key).arg(&members).query(c)?;
+            Ok(json!({"values": scores}))
+        })
+    })
+}
+
+// ── HyperLogLog ──────────────────────────────────────────────────────────────
+
+#[no_mangle]
+pub extern "C" fn redis__pfadd(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let elements = string_vec(&v["elements"])?;
+        with_conn(&v, |c| {
+            let n: i64 = redis::cmd("PFADD").arg(key).arg(&elements).query(c)?;
+            Ok(json!({"value": n != 0}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__pfcount(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let keys = string_vec(&v["keys"])?;
+        with_conn(&v, |c| {
+            let n: i64 = redis::cmd("PFCOUNT").arg(&keys).query(c)?;
+            Ok(json!({"value": n}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__pfmerge(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let dest = need_str(&v, "destination")?;
+        let sources = string_vec(&v["sources"])?;
+        with_conn(&v, |c| {
+            let r: String = redis::cmd("PFMERGE").arg(dest).arg(&sources).query(c)?;
+            Ok(json!({"ok": r == "OK"}))
+        })
+    })
+}
+
+// ── streams ──────────────────────────────────────────────────────────────────
+
+#[no_mangle]
+pub extern "C" fn redis__xadd(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let id = v["id"].as_str().unwrap_or("*");
+        let fields = v["fields"]
+            .as_object()
+            .ok_or_else(|| anyhow!("missing fields object"))?;
+        with_conn(&v, |c| {
+            let mut cmd = redis::cmd("XADD");
+            cmd.arg(key).arg(id);
+            for (f, val) in fields {
+                let s = val
+                    .as_str()
+                    .map(String::from)
+                    .unwrap_or_else(|| val.to_string());
+                cmd.arg(f).arg(s);
+            }
+            let new_id: String = cmd.query(c)?;
+            Ok(json!({"id": new_id}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__xlen(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        with_conn(&v, |c| {
+            let n: i64 = redis::cmd("XLEN").arg(key).query(c)?;
+            Ok(json!({"value": n}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__xrange(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let start = v["start"].as_str().unwrap_or("-");
+        let end = v["end"].as_str().unwrap_or("+");
+        let count = v["count"].as_i64();
+        let rev = v["rev"].as_bool().unwrap_or(false);
+        with_conn(&v, |c| {
+            let mut cmd = redis::cmd(if rev { "XREVRANGE" } else { "XRANGE" });
+            if rev {
+                cmd.arg(key).arg(end).arg(start);
+            } else {
+                cmd.arg(key).arg(start).arg(end);
+            }
+            if let Some(n) = count {
+                cmd.arg("COUNT").arg(n);
+            }
+            let raw: redis::Value = cmd.query(c)?;
+            Ok(json!({"entries": redis_value_to_json(raw)}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__xdel(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let ids = string_vec(&v["ids"])?;
+        with_conn(&v, |c| {
+            let n: i64 = redis::cmd("XDEL").arg(key).arg(&ids).query(c)?;
+            Ok(json!({"value": n}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__xtrim(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let maxlen = v["maxlen"].as_i64();
+        let minid = v["minid"].as_str();
+        with_conn(&v, |c| {
+            let mut cmd = redis::cmd("XTRIM");
+            cmd.arg(key);
+            if let Some(n) = maxlen {
+                cmd.arg("MAXLEN").arg(n);
+            } else if let Some(id) = minid {
+                cmd.arg("MINID").arg(id);
+            } else {
+                return Err(anyhow!("xtrim needs maxlen or minid"));
+            }
+            let n: i64 = cmd.query(c)?;
+            Ok(json!({"value": n}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__xread(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let streams = v["streams"]
+            .as_object()
+            .ok_or_else(|| anyhow!("missing streams object (key->id)"))?;
+        let count = v["count"].as_i64();
+        let block = v["block"].as_i64();
+        with_conn(&v, |c| {
+            let mut cmd = redis::cmd("XREAD");
+            if let Some(n) = count {
+                cmd.arg("COUNT").arg(n);
+            }
+            if let Some(ms) = block {
+                cmd.arg("BLOCK").arg(ms);
+            }
+            cmd.arg("STREAMS");
+            for k in streams.keys() {
+                cmd.arg(k.as_str());
+            }
+            for id in streams.values() {
+                cmd.arg(id.as_str().unwrap_or("$"));
+            }
+            let raw: redis::Value = cmd.query(c)?;
+            Ok(json!({"streams": redis_value_to_json(raw)}))
+        })
+    })
+}
+
+// ── geospatial ───────────────────────────────────────────────────────────────
+
+#[no_mangle]
+pub extern "C" fn redis__geoadd(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let members = v["members"]
+            .as_array()
+            .ok_or_else(|| anyhow!("missing members [[lon,lat,name],...]"))?;
+        with_conn(&v, |c| {
+            let mut cmd = redis::cmd("GEOADD");
+            cmd.arg(key);
+            for m in members {
+                let t = m
+                    .as_array()
+                    .ok_or_else(|| anyhow!("member must be [lon,lat,name]"))?;
+                if t.len() != 3 {
+                    return Err(anyhow!("member must be [lon,lat,name]"));
+                }
+                let lon = t[0].as_f64().ok_or_else(|| anyhow!("bad lon"))?;
+                let lat = t[1].as_f64().ok_or_else(|| anyhow!("bad lat"))?;
+                let name = t[2].as_str().ok_or_else(|| anyhow!("bad member name"))?;
+                cmd.arg(lon).arg(lat).arg(name);
+            }
+            let n: i64 = cmd.query(c)?;
+            Ok(json!({"value": n}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__geopos(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let members = string_vec(&v["members"])?;
+        with_conn(&v, |c| {
+            let raw: redis::Value = redis::cmd("GEOPOS").arg(key).arg(&members).query(c)?;
+            Ok(json!({"positions": redis_value_to_json(raw)}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__geodist(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let m1 = need_str(&v, "member1")?;
+        let m2 = need_str(&v, "member2")?;
+        let unit = v["unit"].as_str().unwrap_or("m");
+        with_conn(&v, |c| {
+            let d: Option<f64> = redis::cmd("GEODIST")
+                .arg(key)
+                .arg(m1)
+                .arg(m2)
+                .arg(unit)
+                .query(c)?;
+            Ok(json!({"value": d}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__geosearch(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        with_conn(&v, |c| {
+            let mut cmd = redis::cmd("GEOSEARCH");
+            cmd.arg(key);
+            if let Some(m) = v["from_member"].as_str() {
+                cmd.arg("FROMMEMBER").arg(m);
+            } else if let (Some(lon), Some(lat)) = (v["lon"].as_f64(), v["lat"].as_f64()) {
+                cmd.arg("FROMLONLAT").arg(lon).arg(lat);
+            } else {
+                return Err(anyhow!("geosearch needs from_member or lon/lat"));
+            }
+            if let Some(r) = v["radius"].as_f64() {
+                cmd.arg("BYRADIUS")
+                    .arg(r)
+                    .arg(v["unit"].as_str().unwrap_or("m"));
+            } else if let (Some(w), Some(h)) = (v["width"].as_f64(), v["height"].as_f64()) {
+                cmd.arg("BYBOX")
+                    .arg(w)
+                    .arg(h)
+                    .arg(v["unit"].as_str().unwrap_or("m"));
+            } else {
+                return Err(anyhow!("geosearch needs radius or width/height"));
+            }
+            if let Some(n) = v["count"].as_i64() {
+                cmd.arg("COUNT").arg(n);
+            }
+            if v["with_coord"].as_bool().unwrap_or(false) {
+                cmd.arg("WITHCOORD");
+            }
+            if v["with_dist"].as_bool().unwrap_or(false) {
+                cmd.arg("WITHDIST");
+            }
+            let raw: redis::Value = cmd.query(c)?;
+            Ok(json!({"results": redis_value_to_json(raw)}))
+        })
+    })
+}
+
+// ── scripting ────────────────────────────────────────────────────────────────
+
+#[no_mangle]
+pub extern "C" fn redis__eval(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| eval_impl(&v, "EVAL", "script"))
+}
+
+#[no_mangle]
+pub extern "C" fn redis__evalsha(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| eval_impl(&v, "EVALSHA", "sha"))
+}
+
+#[no_mangle]
+pub extern "C" fn redis__script_load(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let script = need_str(&v, "script")?;
+        with_conn(&v, |c| {
+            let sha: String = redis::cmd("SCRIPT").arg("LOAD").arg(script).query(c)?;
+            Ok(json!({"sha": sha}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__script_exists(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let shas = string_vec(&v["shas"])?;
+        with_conn(&v, |c| {
+            let exists: Vec<i64> = redis::cmd("SCRIPT").arg("EXISTS").arg(&shas).query(c)?;
+            Ok(json!({"values": exists.iter().map(|n| *n != 0).collect::<Vec<bool>>()}))
+        })
+    })
+}
+
+// ── pub/sub introspection ────────────────────────────────────────────────────
+
+#[no_mangle]
+pub extern "C" fn redis__pubsub_channels(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let pattern = v["pattern"].as_str();
+        with_conn(&v, |c| {
+            let mut cmd = redis::cmd("PUBSUB");
+            cmd.arg("CHANNELS");
+            if let Some(p) = pattern {
+                cmd.arg(p);
+            }
+            let chans: Vec<String> = cmd.query(c)?;
+            Ok(json!({"channels": chans}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__pubsub_numsub(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let channels = string_vec(&v["channels"])?;
+        with_conn(&v, |c| {
+            let pairs: Vec<(String, i64)> =
+                redis::cmd("PUBSUB").arg("NUMSUB").arg(&channels).query(c)?;
+            let map: serde_json::Map<String, Value> =
+                pairs.into_iter().map(|(k, n)| (k, json!(n))).collect();
+            Ok(json!({"counts": map}))
+        })
+    })
+}
+
+// ── server admin extras ──────────────────────────────────────────────────────
+
+#[no_mangle]
+pub extern "C" fn redis__flushall(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let asynchronous = v["asynchronous"].as_bool().unwrap_or(false);
+        with_conn(&v, |c| {
+            let mut cmd = redis::cmd("FLUSHALL");
+            if asynchronous {
+                cmd.arg("ASYNC");
+            }
+            let r: String = cmd.query(c)?;
+            Ok(json!({"ok": r == "OK"}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__time(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        with_conn(&v, |c| {
+            let t: (i64, i64) = redis::cmd("TIME").query(c)?;
+            Ok(json!({"seconds": t.0, "microseconds": t.1}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__config_get(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let parameter = need_str(&v, "parameter")?;
+        with_conn(&v, |c| {
+            let pairs: Vec<(String, String)> =
+                redis::cmd("CONFIG").arg("GET").arg(parameter).query(c)?;
+            let map: serde_json::Map<String, Value> = pairs
+                .into_iter()
+                .map(|(k, val)| (k, Value::String(val)))
+                .collect();
+            Ok(json!({"config": map}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__config_set(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let parameter = need_str(&v, "parameter")?;
+        let value = need_str(&v, "value")?;
+        with_conn(&v, |c| {
+            let r: String = redis::cmd("CONFIG")
+                .arg("SET")
+                .arg(parameter)
+                .arg(value)
+                .query(c)?;
+            Ok(json!({"ok": r == "OK"}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__memory_usage(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        with_conn(&v, |c| {
+            let n: Option<i64> = redis::cmd("MEMORY").arg("USAGE").arg(key).query(c)?;
+            Ok(json!({"value": n}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__echo(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let message = need_str(&v, "message")?;
+        with_conn(&v, |c| {
+            let r: String = redis::cmd("ECHO").arg(message).query(c)?;
+            Ok(json!({"value": r}))
+        })
+    })
+}
+
+// ── pipeline / transaction ───────────────────────────────────────────────────
+
+/// Run a batch of commands in one round-trip. `commands` is an array of argv
+/// arrays (`[["SET","k","v"],["GET","k"]]`). When `transaction` is true the
+/// batch runs inside MULTI/EXEC (atomic). Returns one JSON result per command.
+#[no_mangle]
+pub extern "C" fn redis__pipeline(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let cmds = v["commands"]
+            .as_array()
+            .ok_or_else(|| anyhow!("missing commands array of argv arrays"))?;
+        let atomic = v["transaction"].as_bool().unwrap_or(false);
+        let mut pipe = redis::pipe();
+        if atomic {
+            pipe.atomic();
+        }
+        for entry in cmds {
+            let argv = string_vec(entry)?;
+            if argv.is_empty() {
+                return Err(anyhow!(
+                    "pipeline: each command must be a non-empty argv array"
+                ));
+            }
+            let cmd = pipe.cmd(&argv[0]);
+            for a in &argv[1..] {
+                cmd.arg(a);
+            }
+        }
+        with_conn(&v, |c| {
+            let results: Vec<redis::Value> = pipe.query(c)?;
+            let out: Vec<Value> = results.into_iter().map(redis_value_to_json).collect();
+            Ok(json!({"results": out}))
+        })
+    })
+}
+
 // ── helpers ─────────────────────────────────────────────────────────────────
+
+/// Fetch a required string field, erroring with the field name when absent.
+fn need_str<'a>(v: &'a Value, key: &str) -> Result<&'a str> {
+    v[key].as_str().ok_or_else(|| anyhow!("missing {}", key))
+}
+
+/// Fetch a required integer field, erroring with the field name when absent.
+fn need_i64(v: &Value, key: &str) -> Result<i64> {
+    v[key].as_i64().ok_or_else(|| anyhow!("missing {}", key))
+}
+
+/// Render a JSON scalar as a Redis argument string. Accepts strings verbatim
+/// and stringifies numbers — used for score bounds like `"(1"`, `"-inf"`, `5`.
+fn arg_str(v: &Value) -> Option<String> {
+    match v {
+        Value::String(s) => Some(s.clone()),
+        Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    }
+}
+
+/// SINTER / SUNION / SDIFF share one shape: keys in, member array out.
+fn set_combine(v: &Value, op: &str) -> Result<Value> {
+    let keys = string_vec(&v["keys"])?;
+    with_conn(v, |c| {
+        let members: Vec<String> = redis::cmd(op).arg(&keys).query(c)?;
+        Ok(json!({ "members": members }))
+    })
+}
+
+/// ZPOPMIN / ZPOPMAX share one shape: optional count, returns [member, score] pairs.
+fn zpop(v: &Value, op: &str) -> Result<Value> {
+    let key = need_str(v, "key")?;
+    let count = v["count"].as_i64();
+    with_conn(v, |c| {
+        let mut cmd = redis::cmd(op);
+        cmd.arg(key);
+        if let Some(n) = count {
+            cmd.arg(n);
+        }
+        // Reply is a flat [member, score, member, score, ...] array.
+        let flat: Vec<String> = cmd.query(c)?;
+        let pairs: Vec<(String, String)> = flat
+            .chunks(2)
+            .filter(|ch| ch.len() == 2)
+            .map(|ch| (ch[0].clone(), ch[1].clone()))
+            .collect();
+        Ok(json!({ "pairs": pairs }))
+    })
+}
+
+/// EVAL / EVALSHA share one shape: script-or-sha, keys[], args[], dynamic reply.
+fn eval_impl(v: &Value, op: &str, script_field: &str) -> Result<Value> {
+    let script = need_str(v, script_field)?;
+    let keys = string_vec(&v["keys"])?;
+    let argv = string_vec(&v["args"])?;
+    with_conn(v, |c| {
+        let mut cmd = redis::cmd(op);
+        cmd.arg(script).arg(keys.len());
+        for k in &keys {
+            cmd.arg(k);
+        }
+        for a in &argv {
+            cmd.arg(a);
+        }
+        let raw: redis::Value = cmd.query(c)?;
+        Ok(json!({ "value": redis_value_to_json(raw) }))
+    })
+}
 
 /// Accept either a JSON array of strings or a single string, return Vec<String>.
 fn string_vec(v: &Value) -> Result<Vec<String>> {
@@ -1169,5 +2419,53 @@ mod tests {
     fn string_vec_non_array_non_string_errors() {
         let err = string_vec(&json!({"k": "v"})).unwrap_err().to_string();
         assert!(err.contains("expected string"), "got: {err}");
+    }
+
+    // ── arg_str / need_str / need_i64 (new helpers) ──
+
+    /// Score-bound args reach Redis as strings. A JSON number like `5` must
+    /// stringify to `"5"` (not `"5.0"`), and a string bound like `"(1"` or
+    /// `"-inf"` must pass through verbatim — these encode exclusive/open ranges
+    /// for ZRANGEBYSCORE/ZCOUNT. A regression that formatted integers as floats
+    /// would make `ZCOUNT k 5 10` send `5.0`, which Redis rejects.
+    #[test]
+    fn arg_str_number_stringifies_without_decimal_point() {
+        assert_eq!(arg_str(&json!(5)).as_deref(), Some("5"));
+        assert_eq!(arg_str(&json!(-3)).as_deref(), Some("-3"));
+        assert_eq!(arg_str(&json!("(1")).as_deref(), Some("(1"));
+        assert_eq!(arg_str(&json!("-inf")).as_deref(), Some("-inf"));
+    }
+
+    /// Non-scalar JSON has no Redis-arg representation; `arg_str` returns None
+    /// so callers fall back to their default bound rather than sending garbage.
+    #[test]
+    fn arg_str_rejects_non_scalar() {
+        assert_eq!(arg_str(&json!(["a"])), None);
+        assert_eq!(arg_str(&json!({"k": "v"})), None);
+        assert_eq!(arg_str(&Value::Null), None);
+    }
+
+    /// The error must name the missing field so a stryke-side `Redis::*` die
+    /// message points at the right argument, not a generic "missing".
+    #[test]
+    fn need_str_error_names_the_field() {
+        let err = need_str(&json!({}), "destination").unwrap_err().to_string();
+        assert!(err.contains("destination"), "got: {err}");
+        assert_eq!(need_str(&json!({"key": "k"}), "key").unwrap(), "k");
+    }
+
+    #[test]
+    fn need_i64_error_names_the_field_and_parses_present() {
+        let err = need_i64(&json!({}), "offset").unwrap_err().to_string();
+        assert!(err.contains("offset"), "got: {err}");
+        assert_eq!(need_i64(&json!({"seconds": 42}), "seconds").unwrap(), 42);
+    }
+
+    /// A JSON float in an integer slot must NOT silently truncate — `as_i64`
+    /// returns None for `3.5`, so `need_i64` errors rather than sending `3`.
+    /// Pins that PEXPIRE/SETEX millis can't be quietly corrupted by a float.
+    #[test]
+    fn need_i64_rejects_non_integer_number() {
+        assert!(need_i64(&json!({"seconds": 3.5}), "seconds").is_err());
     }
 }

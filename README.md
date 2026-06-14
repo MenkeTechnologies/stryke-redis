@@ -12,7 +12,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![stryke](https://img.shields.io/badge/stryke-package-cyan.svg)](https://github.com/MenkeTechnologies/strykelang)
 
-### `[REDIS / VALKEY CLIENT FOR STRYKE // KV + LISTS + SETS + HASHES + ZSETS + PUB/SUB + SCAN]`
+### `[REDIS / VALKEY CLIENT FOR STRYKE // KV + LISTS + SETS + HASHES + ZSETS + STREAMS + GEO + SCRIPTING + BITMAPS + HLL + PUB/SUB + PIPELINE + SCAN]`
 
 > *"In-memory state, one pipe away."*
 
@@ -234,13 +234,99 @@ Redis::zrem       $key, $m_or_aref, %opts → $removed
 Redis::zcard      $key, %opts → $size
 Redis::zscore     $key, $member, %opts → $score | undef
 
+# Key management
+Redis::rename     $key, $newkey, %opts → 1        # renamenx → 1|0
+Redis::persist    $key, %opts → 1 | 0
+Redis::pexpire    $key, $millis, %opts → 1 | 0    # pttl → $ms; expiretime → $unix_s
+Redis::expireat   $key, $unix_seconds, %opts → 1  # pexpireat → ms variant
+Redis::touch      $keys_or_aref, %opts → $count   # unlink → async del
+Redis::copy       $src, $dst, %opts → 1 | 0       # opts: replace, destination_db
+Redis::randomkey  %opts → $key | undef
+Redis::object_encoding $key, %opts → $encoding | undef
+
+# String extras + bitmaps
+Redis::getset     $key, $value, %opts → $old      # getdel → get+del
+Redis::append     $key, $value, %opts → $len      # strlen → $len
+Redis::setex      $key, $seconds, $value, %opts → 1   # opts: px (ms)
+Redis::setnx      $key, $value, %opts → 1 | 0
+Redis::getrange   $key, $start, $end, %opts → $substr  # setrange → $len
+Redis::incrbyfloat $key, $by, %opts → $new
+Redis::setbit     $key, $offset, $bit, %opts → $prior  # getbit → bit
+Redis::bitcount   $key, %opts → $n                # opts: start, end
+Redis::bitop      $op, $dst, $keys_or_aref, %opts → $len  # AND|OR|XOR|NOT
+
+# List extras
+Redis::lindex     $key, $index, %opts → $value | undef
+Redis::lset       $key, $index, $value, %opts → 1
+Redis::linsert    $key, $pivot, $value, %opts → $len   # opts: before
+Redis::lrem       $key, $count, $value, %opts → $removed
+Redis::ltrim      $key, $start, $stop, %opts → 1
+Redis::rpoplpush  $src, $dst, %opts → $value      # lmove → opts: from, to
+
+# Hash extras
+Redis::hexists    $key, $field, %opts → 1 | 0
+Redis::hincrby    $key, $field, $by, %opts → $new # opts: float
+Redis::hlen       $key, %opts → $count
+Redis::hsetnx     $key, $field, $value, %opts → 1 | 0
+
+# Set algebra
+Redis::spop       $key, %opts → $member | @members    # opts: count
+Redis::srandmember $key, %opts → $member | @members   # opts: count
+Redis::smove      $src, $dst, $member, %opts → 1 | 0
+Redis::sinter     $keys_or_aref, %opts → @members     # sunion, sdiff
+
+# Sorted set extras
+Redis::zincrby    $key, $by, $member, %opts → $new
+Redis::zrank      $key, $member, %opts → $rank | undef # opts: rev
+Redis::zcount     $key, %opts → $n                     # opts: min, max
+Redis::zrangebyscore $key, %opts → @values | @pairs    # opts: min,max,with_scores,rev,limit_*
+Redis::zpopmin    $key, %opts → @pairs                 # zpopmax; opts: count
+Redis::zremrangebyrank  $key, $start, $stop, %opts → $removed
+Redis::zremrangebyscore $key, %opts → $removed         # opts: min, max
+Redis::zmscore    $key, $members_or_aref, %opts → @scores
+
+# HyperLogLog
+Redis::pfadd      $key, $elements_or_aref, %opts → 1 | 0
+Redis::pfcount    $keys_or_aref, %opts → $approx_card
+Redis::pfmerge    $dst, $sources_or_aref, %opts → 1
+
+# Streams
+Redis::xadd       $key, \%fields, %opts → $id          # opts: id (default "*")
+Redis::xlen       $key, %opts → $count
+Redis::xrange     $key, %opts → @entries               # opts: start,end,count,rev
+Redis::xdel       $key, $ids_or_aref, %opts → $removed
+Redis::xtrim      $key, %opts → $removed               # opts: maxlen | minid
+Redis::xread      \%streams, %opts → \%resp            # {key=>id}; opts: count, block
+
+# Geospatial
+Redis::geoadd     $key, [[lon,lat,name],…], %opts → $added
+Redis::geopos     $key, $members_or_aref, %opts → @[lon,lat]
+Redis::geodist    $key, $m1, $m2, %opts → $dist        # opts: unit (m/km/mi/ft)
+Redis::geosearch  $key, %opts → @results               # from_member|lon+lat; radius|width+height
+
+# Scripting
+Redis::eval       $script, %opts → $result             # opts: keys, args (arefs)
+Redis::evalsha    $sha, %opts → $result                # opts: keys, args
+Redis::script_load $script, %opts → $sha1
+Redis::script_exists $shas_or_aref, %opts → @bools
+
 # Pub/sub + server
 Redis::publish    $channel, $message, %opts → $subscriber_count
+Redis::pubsub_channels %opts → @channels          # opts: pattern
+Redis::pubsub_numsub   $channels_or_aref, %opts → \%counts
 Redis::info       %opts → \%info                  # opts: section
 Redis::dbsize     %opts → $count
 Redis::flushdb    %opts → \%resp                  # require confirm => 1
+Redis::flushall   %opts → 1                        # opts: async
+Redis::time       %opts → ($seconds, $micros)
+Redis::config_get $parameter, %opts → \%config    # config_set → 1
+Redis::memory_usage $key, %opts → $bytes | undef
+Redis::echo       $message, %opts → $message
 Redis::ping       %opts → 1 | ""
 Redis::raw        \@argv, %opts → \%resp          # arbitrary command
+
+# Pipeline / transaction
+Redis::pipeline   [[CMD,…],…], %opts → @results  # opts: transaction (MULTI/EXEC)
 ```
 
 ## [0x05] FFI layer
