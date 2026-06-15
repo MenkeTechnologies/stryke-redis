@@ -2584,6 +2584,43 @@ fn op_parse_url(v: Value) -> Result<Value> {
     }))
 }
 
+/// Build a Redis connection URL from parts — the inverse of `parse_url`. opts:
+/// host (default `127.0.0.1`), port, db, user, password, and `tls` (true →
+/// `rediss://`, default `redis://`). Userinfo is emitted as `user:password@`,
+/// `:password@`, or `user@` depending on which are present. Pure.
+fn op_build_url(v: Value) -> Result<Value> {
+    // stryke serializes a truthy flag as the JSON number 1, not a bool, so accept
+    // bool true, a nonzero number, or "1"/"true".
+    let tls = match v.get("tls") {
+        Some(Value::Bool(b)) => *b,
+        Some(Value::Number(n)) => n.as_i64().map(|i| i != 0).unwrap_or(false),
+        Some(Value::String(s)) => s == "1" || s.eq_ignore_ascii_case("true"),
+        _ => false,
+    };
+    let scheme = if tls { "rediss" } else { "redis" };
+    let host = v.get("host").and_then(Value::as_str).unwrap_or("127.0.0.1");
+    let host = if host.is_empty() { "127.0.0.1" } else { host };
+    let user = v
+        .get("user")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty());
+    // Accept password as string or omit; an empty string still counts as set so
+    // `:@host` round-trips, but None means no userinfo.
+    let password = v.get("password").and_then(Value::as_str);
+    let userinfo = match (user, password) {
+        (Some(u), Some(p)) => format!("{u}:{p}@"),
+        (Some(u), None) => format!("{u}@"),
+        (None, Some(p)) => format!(":{p}@"),
+        (None, None) => String::new(),
+    };
+    let port = v.get("port").and_then(Value::as_u64);
+    let portseg = port.map(|p| format!(":{p}")).unwrap_or_default();
+    let db = v.get("db").and_then(Value::as_u64);
+    let dbseg = db.map(|d| format!("/{d}")).unwrap_or_default();
+    let url = format!("{scheme}://{userinfo}{host}{portseg}{dbseg}");
+    Ok(json!({"url": url}))
+}
+
 /// Match a string against a Redis glob pattern — a faithful port of Redis's
 /// `stringmatchlen`: `*` (any run), `?` (one char), `[...]` classes with
 /// ranges and `[^…]` negation, and `\` escapes. Case-sensitive.
@@ -2660,6 +2697,11 @@ fn op_glob_match(v: Value) -> Result<Value> {
 #[no_mangle]
 pub extern "C" fn redis__parse_url(args: *const c_char) -> *const c_char {
     ffi_call(args, op_parse_url)
+}
+
+#[no_mangle]
+pub extern "C" fn redis__build_url(args: *const c_char) -> *const c_char {
+    ffi_call(args, op_build_url)
 }
 
 #[no_mangle]
@@ -3028,6 +3070,47 @@ mod tests {
         assert_eq!(tls["password"], json!("pw"));
         assert_eq!(tls["port"], Value::Null, "no port → null");
         assert!(op_parse_url(json!({"url": "http://x"})).is_err());
+    }
+
+    #[test]
+    fn build_url_is_inverse_of_parse_url() {
+        // Full round-trip: parts → URL → parts.
+        let built = op_build_url(json!({
+            "user": "alice", "password": "s3cret",
+            "host": "cache.example.com", "port": 6380, "db": 2
+        }))
+        .unwrap()["url"]
+            .clone();
+        assert_eq!(
+            built,
+            json!("redis://alice:s3cret@cache.example.com:6380/2")
+        );
+        let back = op_parse_url(json!({"url": built})).unwrap();
+        assert_eq!(back["user"], json!("alice"));
+        assert_eq!(back["password"], json!("s3cret"));
+        assert_eq!(back["port"], json!(6380));
+        assert_eq!(back["db"], json!(2));
+        // tls flag → rediss, password-only userinfo. stryke passes the flag as
+        // the JSON number 1, not a bool, so both forms must select rediss.
+        assert_eq!(
+            op_build_url(json!({"tls": true, "password": "pw", "host": "h"})).unwrap()["url"],
+            json!("rediss://:pw@h")
+        );
+        assert_eq!(
+            op_build_url(json!({"tls": 1, "password": "pw", "host": "h"})).unwrap()["url"],
+            json!("rediss://:pw@h"),
+            "numeric truthy flag (stryke serialization) also selects rediss"
+        );
+        // Bare host defaults; no userinfo when neither user nor password set.
+        assert_eq!(
+            op_build_url(json!({})).unwrap()["url"],
+            json!("redis://127.0.0.1")
+        );
+        // user-only userinfo.
+        assert_eq!(
+            op_build_url(json!({"user": "u", "host": "h", "db": 0})).unwrap()["url"],
+            json!("redis://u@h/0")
+        );
     }
 
     #[test]

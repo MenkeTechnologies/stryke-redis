@@ -168,4 +168,9 @@ assert_ok exists &Redis::xgroup_create, "Redis::xgroup_create exists"
 assert_ok exists &Redis::xack, "Redis::xack exists"
 assert_ok exists &Redis::xinfo_stream, "Redis::xinfo_stream exists"
 
+# ── pure helpers (no connection) ──
+assert_ok exists &Redis::parse_url, "Redis::parse_url exists"
+assert_ok exists &Redis::build_url, "Redis::build_url exists"
+assert_ok exists &Redis::glob_match, "Redis::glob_match exists"
+
 test_run

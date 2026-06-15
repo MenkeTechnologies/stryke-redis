@@ -1105,6 +1105,13 @@ fn Redis::parse_url ($url) {
     Redis::_decode("parse_url", redis__parse_url(to_json({ url => $url })))
 }
 
+## Build a Redis URL from parts — inverse of parse_url. opts: host (default
+## 127.0.0.1), port, db, user, password, tls (true → rediss://). Returns the URL
+## string.
+fn Redis::build_url (%opts) {
+    Redis::_decode("build_url", redis__build_url(to_json(\%opts)))->{url}
+}
+
 ## True if $key matches a Redis glob $pattern (KEYS/SCAN syntax: * ? [a-z]
 ## [^…] \) — matched client-side, no round trip.
 fn Redis::glob_match ($pattern, $key) {

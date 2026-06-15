@@ -101,6 +101,11 @@ assert_eq $u->{port},     6380,                "parse_url: port"
 assert_eq $u->{db},       2,                   "parse_url: db"
 assert_eq Redis::parse_url("rediss://host")->{tls}, 1, "parse_url: rediss → tls"
 
+# build_url: inverse of parse_url (\@ escapes the literal @ in stryke strings).
+assert_eq Redis::build_url(user => "alice", password => "s3cret", host => "cache.example.com", port => 6380, db => 2), "redis://alice:s3cret\@cache.example.com:6380/2", "build_url: full round-trip"
+assert_eq Redis::build_url(tls => 1, password => "pw", host => "h"), "rediss://:pw\@h", "build_url: tls + password-only userinfo"
+assert_eq Redis::build_url(host => "h"), "redis://h", "build_url: bare host, no userinfo"
+
 assert_eq Redis::glob_match("user:*", "user:42"),         1, "glob_match: star matches"
 assert_eq Redis::glob_match("user:*:s", "user:42:s"),     1, "glob_match: middle star"
 assert_eq Redis::glob_match("user:*:s", "user:42:x"),     0, "glob_match: suffix mismatch"
