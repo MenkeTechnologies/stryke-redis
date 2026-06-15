@@ -2762,6 +2762,39 @@ fn op_cluster_keyslot(v: Value) -> Result<Value> {
     }))
 }
 
+/// Parse a Redis Streams entry ID `<ms>-<seq>` into its parts. A full ID gives
+/// both `ms` (milliseconds time) and `seq` (sequence number); a partial ID
+/// (`<ms>` with no `-<seq>`) gives `ms` with a null `seq`. The special IDs map
+/// to a `special` tag: `-` → `min`, `+` → `max`, `$` → `last`, `*` → `auto`
+/// (with `ms`/`seq` null). opts: `id` (required). Returns `{ms, seq, special}`.
+/// Pure.
+fn op_parse_stream_id(v: Value) -> Result<Value> {
+    let id = v["id"].as_str().ok_or_else(|| anyhow!("missing id"))?;
+    let special = match id {
+        "-" => Some("min"),
+        "+" => Some("max"),
+        "$" => Some("last"),
+        "*" => Some("auto"),
+        _ => None,
+    };
+    if let Some(tag) = special {
+        return Ok(json!({"ms": Value::Null, "seq": Value::Null, "special": tag}));
+    }
+    let (ms_str, seq) = match id.split_once('-') {
+        Some((m, s)) => {
+            let seq: u64 = s
+                .parse()
+                .map_err(|_| anyhow!("invalid stream id sequence `{s}`"))?;
+            (m, json!(seq))
+        }
+        None => (id, Value::Null),
+    };
+    let ms: u64 = ms_str
+        .parse()
+        .map_err(|_| anyhow!("invalid stream id milliseconds `{ms_str}`"))?;
+    Ok(json!({"ms": ms, "seq": seq, "special": Value::Null}))
+}
+
 #[no_mangle]
 pub extern "C" fn redis__parse_url(args: *const c_char) -> *const c_char {
     ffi_call(args, op_parse_url)
@@ -2785,6 +2818,11 @@ pub extern "C" fn redis__glob_escape(args: *const c_char) -> *const c_char {
 #[no_mangle]
 pub extern "C" fn redis__cluster_keyslot(args: *const c_char) -> *const c_char {
     ffi_call(args, op_cluster_keyslot)
+}
+
+#[no_mangle]
+pub extern "C" fn redis__parse_stream_id(args: *const c_char) -> *const c_char {
+    ffi_call(args, op_parse_stream_id)
 }
 
 #[cfg(test)]
@@ -3285,5 +3323,28 @@ mod tests {
             assert!(slot < 16384, "slot for {key:?} in range");
         }
         assert!(op_cluster_keyslot(json!({})).is_err());
+    }
+
+    #[test]
+    fn parse_stream_id_full_partial_and_special() {
+        // Full ID → both parts.
+        let full = op_parse_stream_id(json!({"id": "1526919030474-55"})).unwrap();
+        assert_eq!(full["ms"], json!(1_526_919_030_474u64));
+        assert_eq!(full["seq"], json!(55));
+        assert_eq!(full["special"], Value::Null);
+        // Partial ID (no `-seq`) → ms with a null seq.
+        let partial = op_parse_stream_id(json!({"id": "1526919030474"})).unwrap();
+        assert_eq!(partial["ms"], json!(1_526_919_030_474u64));
+        assert_eq!(partial["seq"], Value::Null);
+        // The four special IDs.
+        for (id, tag) in [("-", "min"), ("+", "max"), ("$", "last"), ("*", "auto")] {
+            let v = op_parse_stream_id(json!({ "id": id })).unwrap();
+            assert_eq!(v["special"], json!(tag), "{id} → {tag}");
+            assert_eq!(v["ms"], Value::Null);
+        }
+        // Non-numeric components reject.
+        assert!(op_parse_stream_id(json!({"id": "abc-1"})).is_err());
+        assert!(op_parse_stream_id(json!({"id": "100-xyz"})).is_err());
+        assert!(op_parse_stream_id(json!({})).is_err());
     }
 }

@@ -174,5 +174,6 @@ assert_ok exists &Redis::build_url, "Redis::build_url exists"
 assert_ok exists &Redis::glob_match, "Redis::glob_match exists"
 assert_ok exists &Redis::glob_escape, "Redis::glob_escape exists"
 assert_ok exists &Redis::cluster_keyslot, "Redis::cluster_keyslot exists"
+assert_ok exists &Redis::parse_stream_id, "Redis::parse_stream_id exists"
 
 test_run

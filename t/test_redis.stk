@@ -128,4 +128,15 @@ assert_eq Redis::cluster_keyslot("{user1000}.following")->{slot}, $bare, "cluste
 assert_eq Redis::cluster_keyslot("foo{user1000}bar")->{slot}, $bare, "cluster_keyslot: hash tag inside larger key"
 assert_eq Redis::cluster_keyslot("foo{}bar")->{hash_tag}, "foo{}bar", "cluster_keyslot: empty braces hash the whole key"
 
+# parse_stream_id: Redis Streams entry ID "<ms>-<seq>" + special IDs.
+val $sid = Redis::parse_stream_id("1526919030474-55")
+assert_eq $sid->{ms},  1526919030474, "parse_stream_id: milliseconds"
+assert_eq $sid->{seq}, 55,            "parse_stream_id: sequence"
+assert_ok !defined(Redis::parse_stream_id("1526919030474")->{seq}), "parse_stream_id: partial id has null seq"
+assert_eq Redis::parse_stream_id("-")->{special}, "min",  "parse_stream_id: - is min"
+assert_eq Redis::parse_stream_id("+")->{special}, "max",  "parse_stream_id: + is max"
+assert_eq Redis::parse_stream_id("\$")->{special}, "last", "parse_stream_id: \$ is last"
+assert_eq Redis::parse_stream_id("*")->{special}, "auto", "parse_stream_id: * is auto"
+assert_dies fn { Redis::parse_stream_id("abc-1") }, "parse_stream_id: rejects non-numeric ms"
+
 test_run

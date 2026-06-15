@@ -1133,3 +1133,10 @@ fn Redis::cluster_keyslot ($key) {
     Redis::_decode("cluster_keyslot", redis__cluster_keyslot(to_json({ key => $key })))
 }
 
+## Parse a Redis Streams entry ID "<ms>-<seq>" into a hashref { ms, seq,
+## special }. A partial "<ms>" gives a null seq; the special IDs - + $ * map to
+## special => min/max/last/auto (with ms/seq null).
+fn Redis::parse_stream_id ($id) {
+    Redis::_decode("parse_stream_id", redis__parse_stream_id(to_json({ id => $id })))
+}
+
