@@ -113,4 +113,10 @@ assert_eq Redis::glob_match("h[ae]llo", "hallo"),         1, "glob_match: char c
 assert_eq Redis::glob_match("h[^e]llo", "hello"),         0, "glob_match: negated class"
 assert_eq Redis::glob_match("key:[0-9]", "key:7"),        1, "glob_match: range"
 
+# glob_escape: make metacharacters literal so glob_match matches verbatim.
+assert_eq Redis::glob_escape("a*b?c"), "a\\*b\\?c", "glob_escape: escapes * and ?"
+val $lit = "key:[v1]*"
+assert_eq Redis::glob_match(Redis::glob_escape($lit), $lit), 1, "glob_escape: escaped literal matches itself"
+assert_eq Redis::glob_match(Redis::glob_escape($lit), "key:vXYZ"), 0, "glob_escape: escaped pattern is literal, not a glob"
+
 test_run

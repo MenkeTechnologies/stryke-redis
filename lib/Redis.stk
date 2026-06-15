@@ -1119,3 +1119,10 @@ fn Redis::glob_match ($pattern, $key) {
         redis__glob_match(to_json({ pattern => $pattern, key => $key })))->{match}
 }
 
+## Escape a literal $value so glob_match matches it verbatim — each glob
+## metacharacter (* ? [ ] \) is backslash-prefixed. Use it to build a safe
+## KEYS/SCAN pattern around a key fragment that may contain glob characters.
+fn Redis::glob_escape ($value) {
+    Redis::_decode("glob_escape", redis__glob_escape(to_json({ value => $value })))->{escaped}
+}
+

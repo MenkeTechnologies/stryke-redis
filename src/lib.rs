@@ -2694,6 +2694,25 @@ fn op_glob_match(v: Value) -> Result<Value> {
     )
 }
 
+/// Escape a literal string so `glob_match` (KEYS/SCAN syntax) matches it
+/// verbatim — each glob metacharacter (`*`, `?`, `[`, `]`, `\`) is backslash-
+/// prefixed. Use it to build a safe pattern around a key fragment that may
+/// itself contain glob characters. `glob_match(glob_escape(s), s)` is always
+/// true. Pure.
+fn op_glob_escape(v: Value) -> Result<Value> {
+    let value = v["value"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing value"))?;
+    let mut escaped = String::with_capacity(value.len());
+    for c in value.chars() {
+        if matches!(c, '*' | '?' | '[' | ']' | '\\') {
+            escaped.push('\\');
+        }
+        escaped.push(c);
+    }
+    Ok(json!({"escaped": escaped}))
+}
+
 #[no_mangle]
 pub extern "C" fn redis__parse_url(args: *const c_char) -> *const c_char {
     ffi_call(args, op_parse_url)
@@ -2707,6 +2726,11 @@ pub extern "C" fn redis__build_url(args: *const c_char) -> *const c_char {
 #[no_mangle]
 pub extern "C" fn redis__glob_match(args: *const c_char) -> *const c_char {
     ffi_call(args, op_glob_match)
+}
+
+#[no_mangle]
+pub extern "C" fn redis__glob_escape(args: *const c_char) -> *const c_char {
+    ffi_call(args, op_glob_escape)
 }
 
 #[cfg(test)]
@@ -3144,5 +3168,27 @@ mod tests {
             op_glob_match(json!({"pattern": "user:*", "key": "admin:1"})).unwrap()["match"],
             json!(false)
         );
+    }
+
+    #[test]
+    fn glob_escape_makes_metachars_literal_and_round_trips_through_match() {
+        // Each metacharacter is backslash-prefixed.
+        assert_eq!(
+            op_glob_escape(json!({"value": "a*b?c[d]e\\f"})).unwrap()["escaped"],
+            json!("a\\*b\\?c\\[d\\]e\\\\f")
+        );
+        // Invariant: an escaped literal matches itself...
+        let lit = "key:[v1]*?";
+        let pat = op_glob_escape(json!({"value": lit})).unwrap()["escaped"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(
+            glob_match(pat.as_bytes(), lit.as_bytes()),
+            "escaped pattern matches the literal"
+        );
+        // ...but not a different string the raw glob would have matched.
+        assert!(!glob_match(pat.as_bytes(), b"key:v1xy"));
+        assert!(op_glob_escape(json!({})).is_err());
     }
 }
