@@ -360,6 +360,16 @@ Redis::lmpop      $keys_or_aref, %opts → [key, [elems]] | undef  # opts: from 
 Redis::zmpop      $keys_or_aref, %opts → [key, [[m,score]]] | undef  # opts: from (MIN|MAX), count
 ```
 
+### Pure helpers (no connection)
+
+```stryke
+Redis::parse_url($url)            → { scheme, tls, user, password, host, port, db }   # redis[s]://…
+Redis::glob_match($pattern, $key) → 1 | ""   # Redis KEYS/SCAN glob (* ? [a-z] [^…] \), matched client-side
+```
+
+`glob_match` is a faithful port of Redis's `stringmatchlen` — use it to filter
+keys locally without a round trip.
+
 ## [0x05] FFI layer
 
 Each `Redis::*` wrapper builds a JSON args dict and calls a sibling

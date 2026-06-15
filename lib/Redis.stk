@@ -1097,3 +1097,18 @@ fn Redis::xinfo_stream ($key, %opts) {
     Redis::_decode("xinfo_stream", redis__xinfo_stream(to_json($r)))->{info}
 }
 
+# ── pure helpers (no connection) ──────────────────────────────────────
+
+## Parse a Redis URL "redis[s]://[user[:pass]@]host[:port][/db]" into a hashref
+## { scheme, tls, user, password, host, port, db }. rediss sets tls.
+fn Redis::parse_url ($url) {
+    Redis::_decode("parse_url", redis__parse_url(to_json({ url => $url })))
+}
+
+## True if $key matches a Redis glob $pattern (KEYS/SCAN syntax: * ? [a-z]
+## [^…] \) — matched client-side, no round trip.
+fn Redis::glob_match ($pattern, $key) {
+    Redis::_decode("glob_match",
+        redis__glob_match(to_json({ pattern => $pattern, key => $key })))->{match}
+}
+

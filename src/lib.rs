@@ -2531,6 +2531,142 @@ fn redis_value_to_json(v: redis::Value) -> Value {
     }
 }
 
+// ── pure helpers (no connection) ─────────────────────────────────────────────
+
+/// Parse a Redis connection URL `redis[s]://[user[:pass]@]host[:port][/db]`
+/// into `{scheme, tls, user, password, host, port, db}`. `rediss` sets `tls`.
+/// Pure — opens no connection.
+fn op_parse_url(v: Value) -> Result<Value> {
+    let url = v["url"].as_str().ok_or_else(|| anyhow!("missing url"))?;
+    let (scheme, rest) = url
+        .split_once("://")
+        .ok_or_else(|| anyhow!("not a Redis URL (missing `://`): {url}"))?;
+    let tls = match scheme {
+        "redis" => false,
+        "rediss" => true,
+        other => return Err(anyhow!("unsupported scheme `{other}` (want redis|rediss)")),
+    };
+    let (authority, path) = match rest.split_once('/') {
+        Some((a, p)) => (a, Some(p)),
+        None => (rest, None),
+    };
+    let (userinfo, hostport) = match authority.rsplit_once('@') {
+        Some((u, h)) => (Some(u), h),
+        None => (None, authority),
+    };
+    let (user, password) = match userinfo {
+        Some(ui) => match ui.split_once(':') {
+            Some((u, p)) => (if u.is_empty() { Value::Null } else { json!(u) }, json!(p)),
+            None => (json!(ui), Value::Null),
+        },
+        None => (Value::Null, Value::Null),
+    };
+    let (host, port) = match hostport.rsplit_once(':') {
+        Some((h, p)) if !h.is_empty() => (h.to_string(), p.parse::<u32>().ok()),
+        _ => (hostport.to_string(), None),
+    };
+    let host = if host.is_empty() {
+        "127.0.0.1".to_string()
+    } else {
+        host
+    };
+    let db = path
+        .filter(|p| !p.is_empty())
+        .and_then(|p| p.parse::<u32>().ok());
+    Ok(json!({
+        "scheme": scheme,
+        "tls": tls,
+        "user": user,
+        "password": password,
+        "host": host,
+        "port": port,
+        "db": db,
+    }))
+}
+
+/// Match a string against a Redis glob pattern — a faithful port of Redis's
+/// `stringmatchlen`: `*` (any run), `?` (one char), `[...]` classes with
+/// ranges and `[^…]` negation, and `\` escapes. Case-sensitive.
+fn glob_match(pat: &[u8], s: &[u8]) -> bool {
+    if pat.is_empty() {
+        return s.is_empty();
+    }
+    match pat[0] {
+        b'*' => {
+            let mut rest = &pat[1..];
+            while rest.first() == Some(&b'*') {
+                rest = &rest[1..];
+            }
+            if rest.is_empty() {
+                return true;
+            }
+            (0..=s.len()).any(|i| glob_match(rest, &s[i..]))
+        }
+        b'?' => !s.is_empty() && glob_match(&pat[1..], &s[1..]),
+        b'[' => {
+            if s.is_empty() {
+                return false;
+            }
+            let mut i = 1;
+            let neg = pat.get(1) == Some(&b'^');
+            if neg {
+                i = 2;
+            }
+            let mut matched = false;
+            while i < pat.len() && pat[i] != b']' {
+                if pat[i] == b'\\' && i + 1 < pat.len() {
+                    i += 1;
+                    if pat[i] == s[0] {
+                        matched = true;
+                    }
+                    i += 1;
+                } else if i + 2 < pat.len() && pat[i + 1] == b'-' && pat[i + 2] != b']' {
+                    let (lo, hi) = (pat[i].min(pat[i + 2]), pat[i].max(pat[i + 2]));
+                    if s[0] >= lo && s[0] <= hi {
+                        matched = true;
+                    }
+                    i += 3;
+                } else {
+                    if pat[i] == s[0] {
+                        matched = true;
+                    }
+                    i += 1;
+                }
+            }
+            if i < pat.len() {
+                i += 1; // consume the closing ]
+            }
+            (matched != neg) && glob_match(&pat[i..], &s[1..])
+        }
+        b'\\' if pat.len() >= 2 => {
+            !s.is_empty() && pat[1] == s[0] && glob_match(&pat[2..], &s[1..])
+        }
+        c => !s.is_empty() && c == s[0] && glob_match(&pat[1..], &s[1..]),
+    }
+}
+
+/// Test whether `key` matches a Redis `pattern` (KEYS/SCAN glob syntax),
+/// client-side. Pure.
+fn op_glob_match(v: Value) -> Result<Value> {
+    let pattern = v["pattern"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing pattern"))?;
+    let key = v["key"].as_str().ok_or_else(|| anyhow!("missing key"))?;
+    Ok(
+        json!({"pattern": pattern, "key": key, "match": glob_match(pattern.as_bytes(), key.as_bytes())}),
+    )
+}
+
+#[no_mangle]
+pub extern "C" fn redis__parse_url(args: *const c_char) -> *const c_char {
+    ffi_call(args, op_parse_url)
+}
+
+#[no_mangle]
+pub extern "C" fn redis__glob_match(args: *const c_char) -> *const c_char {
+    ffi_call(args, op_glob_match)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2867,5 +3003,63 @@ mod tests {
     #[test]
     fn need_i64_rejects_non_integer_number() {
         assert!(need_i64(&json!({"seconds": 3.5}), "seconds").is_err());
+    }
+
+    // ── pure helpers (no connection) ─────────────────────────────────────────
+
+    #[test]
+    fn parse_url_full_with_auth_and_db() {
+        let v =
+            op_parse_url(json!({"url": "redis://alice:s3cret@cache.example.com:6380/2"})).unwrap();
+        assert_eq!(v["scheme"], json!("redis"));
+        assert_eq!(v["tls"], json!(false));
+        assert_eq!(v["user"], json!("alice"));
+        assert_eq!(v["password"], json!("s3cret"));
+        assert_eq!(v["host"], json!("cache.example.com"));
+        assert_eq!(v["port"], json!(6380));
+        assert_eq!(v["db"], json!(2));
+    }
+
+    #[test]
+    fn parse_url_rediss_and_password_only_and_defaults() {
+        let tls = op_parse_url(json!({"url": "rediss://:pw@host"})).unwrap();
+        assert_eq!(tls["tls"], json!(true), "rediss → tls");
+        assert_eq!(tls["user"], Value::Null, "empty user before colon → null");
+        assert_eq!(tls["password"], json!("pw"));
+        assert_eq!(tls["port"], Value::Null, "no port → null");
+        assert!(op_parse_url(json!({"url": "http://x"})).is_err());
+    }
+
+    #[test]
+    fn glob_match_star_question_and_classes() {
+        assert!(glob_match(b"h?llo", b"hello"));
+        assert!(glob_match(b"h*llo", b"heeello"));
+        assert!(glob_match(b"h[ae]llo", b"hallo"));
+        assert!(glob_match(b"h[ae]llo", b"hello"));
+        assert!(!glob_match(b"h[ae]llo", b"hillo"));
+        assert!(glob_match(b"h[^e]llo", b"hallo"));
+        assert!(
+            !glob_match(b"h[^e]llo", b"hello"),
+            "negated class excludes e"
+        );
+        assert!(glob_match(b"key:[0-9]", b"key:7"), "range");
+        assert!(glob_match(b"*", b"anything"));
+        assert!(glob_match(b"user:*:session", b"user:42:session"));
+        assert!(!glob_match(b"user:*:session", b"user:42:other"));
+        // backslash escapes the metacharacter.
+        assert!(glob_match(b"a\\*b", b"a*b"));
+        assert!(!glob_match(b"a\\*b", b"axb"));
+    }
+
+    #[test]
+    fn op_glob_match_returns_bool() {
+        assert_eq!(
+            op_glob_match(json!({"pattern": "user:*", "key": "user:1"})).unwrap()["match"],
+            json!(true)
+        );
+        assert_eq!(
+            op_glob_match(json!({"pattern": "user:*", "key": "admin:1"})).unwrap()["match"],
+            json!(false)
+        );
     }
 }

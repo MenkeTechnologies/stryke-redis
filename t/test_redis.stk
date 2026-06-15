@@ -89,4 +89,23 @@ if ($alive) {
     Redis::del(\@keys, %conn) if @keys
 }
 
+# ── pure helpers (no connection — always run) ────────────────────────
+# `\@` escapes the at-sign so stryke does not array-interpolate it.
+val $u = Redis::parse_url("redis://alice:s3cret\@cache.example.com:6380/2")
+assert_eq $u->{scheme},   "redis",             "parse_url: scheme"
+assert_eq $u->{tls},      0,                   "parse_url: redis is not tls"
+assert_eq $u->{user},     "alice",             "parse_url: user"
+assert_eq $u->{password}, "s3cret",            "parse_url: password"
+assert_eq $u->{host},     "cache.example.com", "parse_url: host"
+assert_eq $u->{port},     6380,                "parse_url: port"
+assert_eq $u->{db},       2,                   "parse_url: db"
+assert_eq Redis::parse_url("rediss://host")->{tls}, 1, "parse_url: rediss → tls"
+
+assert_eq Redis::glob_match("user:*", "user:42"),         1, "glob_match: star matches"
+assert_eq Redis::glob_match("user:*:s", "user:42:s"),     1, "glob_match: middle star"
+assert_eq Redis::glob_match("user:*:s", "user:42:x"),     0, "glob_match: suffix mismatch"
+assert_eq Redis::glob_match("h[ae]llo", "hallo"),         1, "glob_match: char class"
+assert_eq Redis::glob_match("h[^e]llo", "hello"),         0, "glob_match: negated class"
+assert_eq Redis::glob_match("key:[0-9]", "key:7"),        1, "glob_match: range"
+
 test_run
