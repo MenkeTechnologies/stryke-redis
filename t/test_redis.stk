@@ -119,4 +119,13 @@ val $lit = "key:[v1]*"
 assert_eq Redis::glob_match(Redis::glob_escape($lit), $lit), 1, "glob_escape: escaped literal matches itself"
 assert_eq Redis::glob_match(Redis::glob_escape($lit), "key:vXYZ"), 0, "glob_escape: escaped pattern is literal, not a glob"
 
+# cluster_keyslot: CLUSTER KEYSLOT — crc16(hash_tag) % 16384.
+# crc16("123456789") = 0x31C3 = 12739 (standard CRC-16/XMODEM check value).
+assert_eq Redis::cluster_keyslot("123456789")->{slot}, 12739, "cluster_keyslot: matches XMODEM check value"
+# {tag} keys co-locate with the bare tag.
+val $bare = Redis::cluster_keyslot("user1000")->{slot}
+assert_eq Redis::cluster_keyslot("{user1000}.following")->{slot}, $bare, "cluster_keyslot: hash tag co-locates"
+assert_eq Redis::cluster_keyslot("foo{user1000}bar")->{slot}, $bare, "cluster_keyslot: hash tag inside larger key"
+assert_eq Redis::cluster_keyslot("foo{}bar")->{hash_tag}, "foo{}bar", "cluster_keyslot: empty braces hash the whole key"
+
 test_run

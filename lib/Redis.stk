@@ -1126,3 +1126,10 @@ fn Redis::glob_escape ($value) {
     Redis::_decode("glob_escape", redis__glob_escape(to_json({ value => $value })))->{escaped}
 }
 
+## Compute the Redis Cluster hash slot for $key (the CLUSTER KEYSLOT algorithm:
+## crc16(hash_tag(key)) % 16384). Honors {…} hash tags so related keys
+## co-locate on one slot. Returns a hashref { key, slot, hash_tag }.
+fn Redis::cluster_keyslot ($key) {
+    Redis::_decode("cluster_keyslot", redis__cluster_keyslot(to_json({ key => $key })))
+}
+

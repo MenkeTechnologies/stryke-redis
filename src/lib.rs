@@ -2713,6 +2713,55 @@ fn op_glob_escape(v: Value) -> Result<Value> {
     Ok(json!({"escaped": escaped}))
 }
 
+/// CRC16-CCITT in the XMODEM variant (poly 0x1021, init 0x0000, no reflection),
+/// exactly as Redis `crc16.c` computes it. Bitwise rather than table-driven for
+/// readability — key hashing is never hot. The standard CRC-16/XMODEM check
+/// value `crc16("123456789") == 0x31C3` pins the implementation.
+fn crc16_xmodem(data: &[u8]) -> u16 {
+    let mut crc: u16 = 0;
+    for &byte in data {
+        crc ^= (byte as u16) << 8;
+        for _ in 0..8 {
+            crc = if crc & 0x8000 != 0 {
+                (crc << 1) ^ 0x1021
+            } else {
+                crc << 1
+            };
+        }
+    }
+    crc
+}
+
+/// The substring Redis Cluster actually hashes for a key: if the key contains a
+/// `{`, and a `}` follows it with at least one character between, only that
+/// inner substring is hashed (the "hash tag"); otherwise the whole key. Mirrors
+/// `keyHashSlot` in Redis `cluster.c`.
+fn hash_tag(key: &[u8]) -> &[u8] {
+    if let Some(open) = key.iter().position(|&b| b == b'{') {
+        if let Some(rel) = key[open + 1..].iter().position(|&b| b == b'}') {
+            if rel > 0 {
+                return &key[open + 1..open + 1 + rel];
+            }
+        }
+    }
+    key
+}
+
+/// Compute the Redis Cluster hash slot for a key — the `CLUSTER KEYSLOT`
+/// algorithm: `crc16(hash_tag(key)) % 16384`. Honors `{…}` hash tags so related
+/// keys (`{user1000}.following`, `foo{user1000}bar`) co-locate on one slot.
+/// opts: key (required). Returns `{key, slot, hash_tag}`. Pure.
+fn op_cluster_keyslot(v: Value) -> Result<Value> {
+    let key = v["key"].as_str().ok_or_else(|| anyhow!("missing key"))?;
+    let tag = hash_tag(key.as_bytes());
+    let slot = crc16_xmodem(tag) % 16384;
+    Ok(json!({
+        "key": key,
+        "slot": slot,
+        "hash_tag": std::str::from_utf8(tag).unwrap_or(key),
+    }))
+}
+
 #[no_mangle]
 pub extern "C" fn redis__parse_url(args: *const c_char) -> *const c_char {
     ffi_call(args, op_parse_url)
@@ -2731,6 +2780,11 @@ pub extern "C" fn redis__glob_match(args: *const c_char) -> *const c_char {
 #[no_mangle]
 pub extern "C" fn redis__glob_escape(args: *const c_char) -> *const c_char {
     ffi_call(args, op_glob_escape)
+}
+
+#[no_mangle]
+pub extern "C" fn redis__cluster_keyslot(args: *const c_char) -> *const c_char {
+    ffi_call(args, op_cluster_keyslot)
 }
 
 #[cfg(test)]
@@ -3190,5 +3244,46 @@ mod tests {
         // ...but not a different string the raw glob would have matched.
         assert!(!glob_match(pat.as_bytes(), b"key:v1xy"));
         assert!(op_glob_escape(json!({})).is_err());
+    }
+
+    #[test]
+    fn crc16_matches_standard_xmodem_check_value() {
+        // The canonical CRC-16/XMODEM check value for "123456789" is 0x31C3.
+        assert_eq!(crc16_xmodem(b"123456789"), 0x31C3);
+        assert_eq!(crc16_xmodem(b""), 0);
+    }
+
+    #[test]
+    fn cluster_keyslot_uses_hash_tag_and_stays_in_range() {
+        // crc16("123456789") = 0x31C3 = 12739, which is < 16384 so it is the slot.
+        assert_eq!(
+            op_cluster_keyslot(json!({"key": "123456789"})).unwrap()["slot"],
+            json!(12739)
+        );
+        // Hash-tag equivalence: a `{tag}` collapses the key to its inner tag, so
+        // these three keys all land on the same slot as the bare tag.
+        let bare = op_cluster_keyslot(json!({"key": "user1000"})).unwrap()["slot"].clone();
+        for key in ["{user1000}.following", "foo{user1000}bar", "{user1000}"] {
+            assert_eq!(
+                op_cluster_keyslot(json!({ "key": key })).unwrap()["slot"],
+                bare,
+                "{key} co-locates with its hash tag"
+            );
+        }
+        // Empty braces and an unclosed `{` fall back to hashing the whole key.
+        let whole = op_cluster_keyslot(json!({"key": "foo{}bar"})).unwrap();
+        assert_eq!(whole["hash_tag"], json!("foo{}bar"));
+        assert_eq!(
+            op_cluster_keyslot(json!({"key": "foo{bar"})).unwrap()["hash_tag"],
+            json!("foo{bar")
+        );
+        // Every slot is within the 16384-slot space.
+        for key in ["", "a", "{x}", "a very long :: redis key with spaces"] {
+            let slot = op_cluster_keyslot(json!({ "key": key })).unwrap()["slot"]
+                .as_u64()
+                .unwrap();
+            assert!(slot < 16384, "slot for {key:?} in range");
+        }
+        assert!(op_cluster_keyslot(json!({})).is_err());
     }
 }
