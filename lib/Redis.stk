@@ -1140,3 +1140,10 @@ fn Redis::parse_stream_id ($id) {
     Redis::_decode("parse_stream_id", redis__parse_stream_id(to_json({ id => $id })))
 }
 
+## Build a Redis Streams entry ID from parts — inverse of parse_stream_id.
+## %opts: special (min/max/last/auto → - + $ *), or ms (+ optional seq) →
+## "<ms>-<seq>" / "<ms>". Returns the id string.
+fn Redis::build_stream_id (%opts) {
+    Redis::_decode("build_stream_id", redis__build_stream_id(to_json(\%opts)))->{id}
+}
+

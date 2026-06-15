@@ -2795,6 +2795,37 @@ fn op_parse_stream_id(v: Value) -> Result<Value> {
     Ok(json!({"ms": ms, "seq": seq, "special": Value::Null}))
 }
 
+/// Build a Redis Streams entry ID from parts — the inverse of `parse_stream_id`.
+/// A `special` tag (`min`/`max`/`last`/`auto`) yields `-`/`+`/`$`/`*`; otherwise
+/// `ms` is required and an optional `seq` produces `<ms>-<seq>` (a partial
+/// `<ms>` when `seq` is omitted). opts: `special`, or `ms` (+ optional `seq`).
+/// Returns `{id}`. Pure.
+fn op_build_stream_id(v: Value) -> Result<Value> {
+    if let Some(tag) = v.get("special").and_then(Value::as_str) {
+        let id = match tag {
+            "min" => "-",
+            "max" => "+",
+            "last" => "$",
+            "auto" => "*",
+            other => {
+                return Err(anyhow!(
+                    "unknown special stream id `{other}` (min|max|last|auto)"
+                ))
+            }
+        };
+        return Ok(json!({ "id": id }));
+    }
+    let ms = v
+        .get("ms")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| anyhow!("missing ms (or special)"))?;
+    let id = match v.get("seq").and_then(Value::as_u64) {
+        Some(seq) => format!("{ms}-{seq}"),
+        None => ms.to_string(),
+    };
+    Ok(json!({ "id": id }))
+}
+
 #[no_mangle]
 pub extern "C" fn redis__parse_url(args: *const c_char) -> *const c_char {
     ffi_call(args, op_parse_url)
@@ -2823,6 +2854,11 @@ pub extern "C" fn redis__cluster_keyslot(args: *const c_char) -> *const c_char {
 #[no_mangle]
 pub extern "C" fn redis__parse_stream_id(args: *const c_char) -> *const c_char {
     ffi_call(args, op_parse_stream_id)
+}
+
+#[no_mangle]
+pub extern "C" fn redis__build_stream_id(args: *const c_char) -> *const c_char {
+    ffi_call(args, op_build_stream_id)
 }
 
 #[cfg(test)]
@@ -3346,5 +3382,41 @@ mod tests {
         assert!(op_parse_stream_id(json!({"id": "abc-1"})).is_err());
         assert!(op_parse_stream_id(json!({"id": "100-xyz"})).is_err());
         assert!(op_parse_stream_id(json!({})).is_err());
+    }
+
+    #[test]
+    fn build_stream_id_inverts_parse_stream_id() {
+        // ms + seq → full ID; ms alone → partial.
+        assert_eq!(
+            op_build_stream_id(json!({"ms": 1_526_919_030_474u64, "seq": 55})).unwrap()["id"],
+            json!("1526919030474-55")
+        );
+        assert_eq!(
+            op_build_stream_id(json!({"ms": 1_526_919_030_474u64})).unwrap()["id"],
+            json!("1526919030474")
+        );
+        // Special tags → their sigils.
+        for (tag, id) in [("min", "-"), ("max", "+"), ("last", "$"), ("auto", "*")] {
+            assert_eq!(
+                op_build_stream_id(json!({ "special": tag })).unwrap()["id"],
+                json!(id),
+                "{tag} → {id}"
+            );
+        }
+        // Round-trips parse_stream_id (full, partial, and each special).
+        for id in ["1526919030474-55", "1526919030474", "-", "+", "$", "*"] {
+            let p = op_parse_stream_id(json!({ "id": id })).unwrap();
+            let rebuilt = op_build_stream_id(json!({
+                "ms": p["ms"],
+                "seq": p["seq"],
+                "special": p["special"],
+            }))
+            .unwrap()["id"]
+                .clone();
+            assert_eq!(rebuilt, json!(id), "round-trip for {id}");
+        }
+        // Unknown special and missing ms reject.
+        assert!(op_build_stream_id(json!({"special": "bogus"})).is_err());
+        assert!(op_build_stream_id(json!({"seq": 1})).is_err());
     }
 }

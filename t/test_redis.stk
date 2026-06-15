@@ -139,4 +139,12 @@ assert_eq Redis::parse_stream_id("\$")->{special}, "last", "parse_stream_id: \$ 
 assert_eq Redis::parse_stream_id("*")->{special}, "auto", "parse_stream_id: * is auto"
 assert_dies fn { Redis::parse_stream_id("abc-1") }, "parse_stream_id: rejects non-numeric ms"
 
+# build_stream_id: inverse of parse_stream_id.
+assert_eq Redis::build_stream_id(ms => 1526919030474, seq => 55), "1526919030474-55", "build_stream_id: ms + seq → full id"
+assert_eq Redis::build_stream_id(ms => 1526919030474), "1526919030474", "build_stream_id: ms alone → partial id"
+assert_eq Redis::build_stream_id(special => "min"), "-", "build_stream_id: min → -"
+assert_eq Redis::build_stream_id(special => "auto"), "*", "build_stream_id: auto → *"
+assert_eq Redis::build_stream_id(%{ Redis::parse_stream_id("1526919030474-55") }), "1526919030474-55", "build_stream_id: round-trips parse_stream_id"
+assert_dies fn { Redis::build_stream_id(special => "bogus") }, "build_stream_id: rejects an unknown special"
+
 test_run

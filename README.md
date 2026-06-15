@@ -369,6 +369,7 @@ Redis::glob_match($pattern, $key) → 1 | ""   # Redis KEYS/SCAN glob (* ? [a-z]
 Redis::glob_escape($value)        → $escaped # backslash-escape * ? [ ] \ so glob_match treats $value literally
 Redis::cluster_keyslot($key)      → { key, slot, hash_tag }   # CLUSTER KEYSLOT: crc16(hash_tag(key)) % 16384, honors {…} hash tags
 Redis::parse_stream_id($id)       → { ms, seq, special }   # stream entry id <ms>-<seq>; special - + $ * → min/max/last/auto
+Redis::build_stream_id(%opts)     → $id   # { ms, seq? } or { special } → stream entry id; inverse of parse_stream_id
 ```
 
 `glob_match` is a faithful port of Redis's `stringmatchlen` — use it to filter
