@@ -1126,6 +1126,13 @@ fn Redis::glob_escape ($value) {
     Redis::_decode("glob_escape", redis__glob_escape(to_json({ value => $value })))->{escaped}
 }
 
+## Decode the glob escapes (\* \? \[ \] \\) back to their literal characters —
+## inverse of glob_escape. A single left-to-right scan, so a \\ next to a
+## metacharacter is handled correctly. Returns the unescaped string.
+fn Redis::glob_unescape ($value) {
+    Redis::_decode("glob_unescape", redis__glob_unescape(to_json({ value => $value })))->{value}
+}
+
 ## Compute the Redis Cluster hash slot for $key (the CLUSTER KEYSLOT algorithm:
 ## crc16(hash_tag(key)) % 16384). Honors {…} hash tags so related keys
 ## co-locate on one slot. Returns a hashref { key, slot, hash_tag }.

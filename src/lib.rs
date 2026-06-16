@@ -2713,6 +2713,34 @@ fn op_glob_escape(v: Value) -> Result<Value> {
     Ok(json!({"escaped": escaped}))
 }
 
+/// Decode the glob escapes `\*` `\?` `\[` `\]` `\\` back to their literal
+/// characters — the inverse of `glob_escape`. A single left-to-right scan, so a
+/// `\\` next to a metacharacter is handled correctly; a backslash not
+/// introducing one of those escapes is left literal. opts: `value` (or
+/// `escaped`). Returns `{value}`. Pure.
+fn op_glob_unescape(v: Value) -> Result<Value> {
+    let value = v["value"]
+        .as_str()
+        .or_else(|| v["escaped"].as_str())
+        .ok_or_else(|| anyhow!("missing value"))?;
+    let chars: Vec<char> = value.chars().collect();
+    let mut out = String::with_capacity(value.len());
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '\\'
+            && i + 1 < chars.len()
+            && matches!(chars[i + 1], '*' | '?' | '[' | ']' | '\\')
+        {
+            out.push(chars[i + 1]);
+            i += 2;
+        } else {
+            out.push(chars[i]);
+            i += 1;
+        }
+    }
+    Ok(json!({"value": out}))
+}
+
 /// CRC16-CCITT in the XMODEM variant (poly 0x1021, init 0x0000, no reflection),
 /// exactly as Redis `crc16.c` computes it. Bitwise rather than table-driven for
 /// readability — key hashing is never hot. The standard CRC-16/XMODEM check
@@ -2963,6 +2991,11 @@ pub extern "C" fn redis__glob_match(args: *const c_char) -> *const c_char {
 #[no_mangle]
 pub extern "C" fn redis__glob_escape(args: *const c_char) -> *const c_char {
     ffi_call(args, op_glob_escape)
+}
+
+#[no_mangle]
+pub extern "C" fn redis__glob_unescape(args: *const c_char) -> *const c_char {
+    ffi_call(args, op_glob_unescape)
 }
 
 #[no_mangle]
@@ -3457,6 +3490,39 @@ mod tests {
         // ...but not a different string the raw glob would have matched.
         assert!(!glob_match(pat.as_bytes(), b"key:v1xy"));
         assert!(op_glob_escape(json!({})).is_err());
+    }
+
+    #[test]
+    fn glob_unescape_inverts_glob_escape() {
+        let un = |s: &str| {
+            op_glob_unescape(json!({ "value": s })).unwrap()["value"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        // Each escape decodes back.
+        assert_eq!(un("a\\*b\\?c"), "a*b?c");
+        assert_eq!(un("\\[d\\]"), "[d]");
+        assert_eq!(un("c\\\\d"), "c\\d");
+        // A `\\` adjacent to a metacharacter must not be mis-parsed (left-to-right
+        // scan): `\\*` is a literal backslash followed by an unescaped `*`.
+        assert_eq!(un("\\\\*"), "\\*");
+        // A backslash not introducing a glob escape stays literal.
+        assert_eq!(un("a\\nb"), "a\\nb");
+        // Round-trips glob_escape for arbitrary input, including every metachar.
+        for raw in ["a*b?c[d]e\\f", "key:[v1]*?", "plain", "\\*?[]\\"] {
+            let esc = op_glob_escape(json!({ "value": raw })).unwrap()["escaped"]
+                .as_str()
+                .unwrap()
+                .to_string();
+            assert_eq!(un(&esc), raw, "round-trip for {raw:?}");
+        }
+        // `escaped` is accepted as an alias for `value`.
+        assert_eq!(
+            op_glob_unescape(json!({"escaped": "x\\*y"})).unwrap()["value"],
+            json!("x*y")
+        );
+        assert!(op_glob_unescape(json!({})).is_err());
     }
 
     #[test]

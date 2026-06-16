@@ -119,6 +119,15 @@ val $lit = "key:[v1]*"
 assert_eq Redis::glob_match(Redis::glob_escape($lit), $lit), 1, "glob_escape: escaped literal matches itself"
 assert_eq Redis::glob_match(Redis::glob_escape($lit), "key:vXYZ"), 0, "glob_escape: escaped pattern is literal, not a glob"
 
+# glob_unescape: inverse of glob_escape.
+assert_eq Redis::glob_unescape("a\\*b\\?c"), "a*b?c", "glob_unescape: decodes * and ?"
+assert_eq Redis::glob_unescape("\\[d\\]"),   "[d]",   "glob_unescape: decodes [ and ]"
+assert_eq Redis::glob_unescape("c\\\\d"),    "c\\d",  "glob_unescape: doubled backslash → one"
+# Round-trips glob_escape.
+for val $raw (q{a*b?c}, q{key:[v1]*}, q{plain}) {
+    assert_eq Redis::glob_unescape(Redis::glob_escape($raw)), $raw, "glob_unescape: round-trips glob_escape($raw)"
+}
+
 # cluster_keyslot: CLUSTER KEYSLOT — crc16(hash_tag) % 16384.
 # crc16("123456789") = 0x31C3 = 12739 (standard CRC-16/XMODEM check value).
 assert_eq Redis::cluster_keyslot("123456789")->{slot}, 12739, "cluster_keyslot: matches XMODEM check value"

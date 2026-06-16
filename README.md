@@ -367,6 +367,7 @@ Redis::parse_url($url)            → { scheme, tls, user, password, host, port,
 Redis::build_url(%opts)           → $url      # parts → redis[s]:// URL; inverse of parse_url (opts: host, port, db, user, password, tls)
 Redis::glob_match($pattern, $key) → 1 | ""   # Redis KEYS/SCAN glob (* ? [a-z] [^…] \), matched client-side
 Redis::glob_escape($value)        → $escaped # backslash-escape * ? [ ] \ so glob_match treats $value literally
+Redis::glob_unescape($escaped)    → $value   # inverse of glob_escape: \* \? \[ \] \\ → literal chars (single left-to-right scan)
 Redis::cluster_keyslot($key)      → { key, slot, hash_tag }   # CLUSTER KEYSLOT: crc16(hash_tag(key)) % 16384, honors {…} hash tags
 Redis::same_slot($a, $b)          → { a, b, slot_a, slot_b, same_slot }   # do two keys co-locate (avoid CROSSSLOT in multi-key ops)?
 Redis::parse_stream_id($id)       → { ms, seq, special }   # stream entry id <ms>-<seq>; special - + $ * → min/max/last/auto
