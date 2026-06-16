@@ -128,6 +128,12 @@ assert_eq Redis::cluster_keyslot("{user1000}.following")->{slot}, $bare, "cluste
 assert_eq Redis::cluster_keyslot("foo{user1000}bar")->{slot}, $bare, "cluster_keyslot: hash tag inside larger key"
 assert_eq Redis::cluster_keyslot("foo{}bar")->{hash_tag}, "foo{}bar", "cluster_keyslot: empty braces hash the whole key"
 
+# same_slot: do two keys co-locate (avoid CROSSSLOT)?
+assert_eq Redis::same_slot("{user1000}.following", "{user1000}.followers")->{same_slot}, 1, "same_slot: shared hash tag co-locates"
+assert_eq Redis::same_slot("user1000", "user2000")->{same_slot}, 0, "same_slot: unrelated keys differ"
+assert_eq Redis::same_slot("user1000", "foo{user1000}bar")->{same_slot}, 1, "same_slot: bare tag matches embedded tag"
+assert_dies fn { Redis::same_slot("x") }, "same_slot: requires two keys"
+
 # parse_stream_id: Redis Streams entry ID "<ms>-<seq>" + special IDs.
 val $sid = Redis::parse_stream_id("1526919030474-55")
 assert_eq $sid->{ms},  1526919030474, "parse_stream_id: milliseconds"

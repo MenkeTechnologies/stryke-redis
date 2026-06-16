@@ -1133,6 +1133,13 @@ fn Redis::cluster_keyslot ($key) {
     Redis::_decode("cluster_keyslot", redis__cluster_keyslot(to_json({ key => $key })))
 }
 
+## Whether keys $a and $b map to the same cluster hash slot — the condition a
+## multi-key command needs to avoid a CROSSSLOT error. Honors {…} hash tags.
+## Returns a hashref { a, b, slot_a, slot_b, same_slot }.
+fn Redis::same_slot ($a, $b) {
+    Redis::_decode("same_slot", redis__same_slot(to_json({ a => $a, b => $b })))
+}
+
 ## Parse a Redis Streams entry ID "<ms>-<seq>" into a hashref { ms, seq,
 ## special }. A partial "<ms>" gives a null seq; the special IDs - + $ * map to
 ## special => min/max/last/auto (with ms/seq null).

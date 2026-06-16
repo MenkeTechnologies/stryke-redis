@@ -2762,6 +2762,32 @@ fn op_cluster_keyslot(v: Value) -> Result<Value> {
     }))
 }
 
+/// Whether two keys map to the same Redis Cluster hash slot — the condition a
+/// multi-key command (MGET/MSET, transactions, Lua with multiple keys) needs to
+/// avoid a CROSSSLOT error. Computes each key's slot via the same
+/// `crc16(hash_tag(key)) % 16384` as `cluster_keyslot`, honoring `{…}` hash
+/// tags. opts: `a`, `b` (keys). Returns `{a, b, slot_a, slot_b, same_slot}`.
+/// Pure.
+fn op_same_slot(v: Value) -> Result<Value> {
+    let a = v["a"]
+        .as_str()
+        .or_else(|| v["key_a"].as_str())
+        .ok_or_else(|| anyhow!("missing a"))?;
+    let b = v["b"]
+        .as_str()
+        .or_else(|| v["key_b"].as_str())
+        .ok_or_else(|| anyhow!("missing b"))?;
+    let slot_a = crc16_xmodem(hash_tag(a.as_bytes())) % 16384;
+    let slot_b = crc16_xmodem(hash_tag(b.as_bytes())) % 16384;
+    Ok(json!({
+        "a": a,
+        "b": b,
+        "slot_a": slot_a,
+        "slot_b": slot_b,
+        "same_slot": slot_a == slot_b,
+    }))
+}
+
 /// Parse a Redis Streams entry ID `<ms>-<seq>` into its parts. A full ID gives
 /// both `ms` (milliseconds time) and `seq` (sequence number); a partial ID
 /// (`<ms>` with no `-<seq>`) gives `ms` with a null `seq`. The special IDs map
@@ -2849,6 +2875,11 @@ pub extern "C" fn redis__glob_escape(args: *const c_char) -> *const c_char {
 #[no_mangle]
 pub extern "C" fn redis__cluster_keyslot(args: *const c_char) -> *const c_char {
     ffi_call(args, op_cluster_keyslot)
+}
+
+#[no_mangle]
+pub extern "C" fn redis__same_slot(args: *const c_char) -> *const c_char {
+    ffi_call(args, op_same_slot)
 }
 
 #[no_mangle]
@@ -3359,6 +3390,30 @@ mod tests {
             assert!(slot < 16384, "slot for {key:?} in range");
         }
         assert!(op_cluster_keyslot(json!({})).is_err());
+    }
+
+    #[test]
+    fn same_slot_tracks_hash_tag_colocation() {
+        // Keys sharing a `{tag}` co-locate, so MGET/MSET/transactions are safe.
+        let v = op_same_slot(json!({"a": "{user1000}.following", "b": "{user1000}.followers"}))
+            .unwrap();
+        assert_eq!(v["same_slot"], json!(true));
+        assert_eq!(v["slot_a"], v["slot_b"]);
+        // Without a shared tag, two arbitrary keys land on different slots.
+        let diff = op_same_slot(json!({"a": "user1000", "b": "user2000"})).unwrap();
+        assert_eq!(diff["same_slot"], json!(false));
+        // A bare tag matches a key embedding that tag.
+        assert_eq!(
+            op_same_slot(json!({"a": "user1000", "b": "foo{user1000}bar"})).unwrap()["same_slot"],
+            json!(true)
+        );
+        // Slots agree with cluster_keyslot.
+        let ks =
+            op_cluster_keyslot(json!({"key": "{user1000}.following"})).unwrap()["slot"].clone();
+        assert_eq!(v["slot_a"], ks);
+        // Missing keys reject.
+        assert!(op_same_slot(json!({"a": "x"})).is_err());
+        assert!(op_same_slot(json!({})).is_err());
     }
 
     #[test]
