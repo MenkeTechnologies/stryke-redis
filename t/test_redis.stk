@@ -168,6 +168,14 @@ for val $raw (q{a*b?c}, q{key:[v1]*}, q{plain}) {
     assert_eq Redis::glob_unescape(Redis::glob_escape($raw)), $raw, "glob_unescape: round-trips glob_escape($raw)"
 }
 
+# glob_to_regex: convert a Redis glob pattern to an anchored regex.
+assert_eq Redis::glob_to_regex("user:*"), "^user:.*\$",   "glob_to_regex: star → .*"
+assert_eq Redis::glob_to_regex("h?llo"),  "^h.llo\$",     "glob_to_regex: ? → ."
+assert_eq Redis::glob_to_regex("a.b+c"),  "^a\\.b\\+c\$", "glob_to_regex: regex metacharacters escaped"
+assert_eq Redis::glob_to_regex("[a-z]"),  "^[a-z]\$",     "glob_to_regex: character-class range preserved"
+assert_eq Redis::glob_to_regex("[^0-9]"), "^[^0-9]\$",    "glob_to_regex: negated class preserved"
+assert_dies fn { Redis::glob_to_regex("ab[cd") }, "glob_to_regex: rejects an unterminated class"
+
 # cluster_keyslot: CLUSTER KEYSLOT — crc16(hash_tag) % 16384.
 # crc16("123456789") = 0x31C3 = 12739 (standard CRC-16/XMODEM check value).
 assert_eq Redis::cluster_keyslot("123456789")->{slot}, 12739, "cluster_keyslot: matches XMODEM check value"

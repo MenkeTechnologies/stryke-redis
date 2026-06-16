@@ -372,6 +372,7 @@ Redis::redact_url($url)           → $url      # mask the password (user:***@) 
 Redis::glob_match($pattern, $key) → 1 | ""   # Redis KEYS/SCAN glob (* ? [a-z] [^…] \), matched client-side
 Redis::glob_escape($value)        → $escaped # backslash-escape * ? [ ] \ so glob_match treats $value literally
 Redis::glob_unescape($escaped)    → $value   # inverse of glob_escape: \* \? \[ \] \\ → literal chars (single left-to-right scan)
+Redis::glob_to_regex($pattern)    → $regex   # Redis glob → anchored regex (* → .*, ? → ., [..] class, \x literal); same semantics as glob_match
 Redis::cluster_keyslot($key)      → { key, slot, hash_tag }   # CLUSTER KEYSLOT: crc16(hash_tag(key)) % 16384, honors {…} hash tags
 Redis::same_slot($a, $b)          → { a, b, slot_a, slot_b, same_slot }   # do two keys co-locate (avoid CROSSSLOT in multi-key ops)?
 Redis::parse_stream_id($id)       → { ms, seq, special }   # stream entry id <ms>-<seq>; special - + $ * → min/max/last/auto

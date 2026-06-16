@@ -1169,6 +1169,16 @@ fn Redis::glob_unescape ($value) {
     Redis::_decode("glob_unescape", redis__glob_unescape(to_json({ value => $value })))->{value}
 }
 
+## Convert a Redis glob-style $pattern (KEYS / SCAN MATCH form) into an anchored
+## regular expression with the same semantics — for client-side key filtering or
+## understanding a pattern. * → .*, ? → ., [...] becomes a regex character class
+## (negation, a-z ranges and \ escapes preserved), \x outside a class becomes
+## literal x, every other char is regex-escaped, and the result is wrapped in ^…$
+## like glob_match. Returns the regex string.
+fn Redis::glob_to_regex ($pattern) {
+    Redis::_decode("glob_to_regex", redis__glob_to_regex(to_json({ pattern => $pattern })))->{regex}
+}
+
 ## Compute the Redis Cluster hash slot for $key (the CLUSTER KEYSLOT algorithm:
 ## crc16(hash_tag(key)) % 16384). Honors {…} hash tags so related keys
 ## co-locate on one slot. Returns a hashref { key, slot, hash_tag }.

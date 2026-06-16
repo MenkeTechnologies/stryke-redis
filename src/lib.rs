@@ -2775,6 +2775,86 @@ fn op_glob_unescape(v: Value) -> Result<Value> {
     Ok(json!({"value": out}))
 }
 
+/// Convert a Redis glob-style `pattern` (the form `KEYS`/`SCAN MATCH` use) into an
+/// anchored regular expression with the same semantics — for filtering keys
+/// client-side, or understanding what a pattern accepts. `*` → `.*`, `?` → `.`,
+/// `[…]` becomes a regex character class (negation `[^…]`, `a-z` ranges and `\`
+/// escapes are preserved), a `\x` escape outside a class becomes the literal `x`,
+/// and every other character is regex-escaped. The result is wrapped in `^…$` so
+/// it matches the whole key, mirroring `glob_match`. opts: `pattern` (required).
+/// Returns `{pattern, regex}`. Pure.
+fn op_glob_to_regex(v: Value) -> Result<Value> {
+    let pattern = v["pattern"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing pattern"))?;
+    let chars: Vec<char> = pattern.chars().collect();
+    let n = chars.len();
+    let esc_lit = |c: char, out: &mut String| {
+        if "\\^$.|?*+()[]{}".contains(c) {
+            out.push('\\');
+        }
+        out.push(c);
+    };
+    let mut out = String::from("^");
+    let mut i = 0;
+    while i < n {
+        match chars[i] {
+            '*' => {
+                out.push_str(".*");
+                while i + 1 < n && chars[i + 1] == '*' {
+                    i += 1;
+                }
+                i += 1;
+            }
+            '?' => {
+                out.push('.');
+                i += 1;
+            }
+            '\\' if i + 1 < n => {
+                esc_lit(chars[i + 1], &mut out);
+                i += 2;
+            }
+            '[' => {
+                out.push('[');
+                i += 1;
+                if i < n && chars[i] == '^' {
+                    out.push('^');
+                    i += 1;
+                }
+                while i < n && chars[i] != ']' {
+                    if chars[i] == '\\' && i + 1 < n {
+                        let c = chars[i + 1];
+                        // Re-escape only the chars that are class-significant in regex.
+                        if matches!(c, '\\' | ']' | '^' | '-') {
+                            out.push('\\');
+                        }
+                        out.push(c);
+                        i += 2;
+                    } else {
+                        let c = chars[i];
+                        if matches!(c, '\\' | ']' | '^') {
+                            out.push('\\');
+                        }
+                        out.push(c);
+                        i += 1;
+                    }
+                }
+                if i >= n {
+                    return Err(anyhow!("unterminated `[` in glob pattern: {pattern}"));
+                }
+                out.push(']');
+                i += 1; // consume the closing `]`
+            }
+            c => {
+                esc_lit(c, &mut out);
+                i += 1;
+            }
+        }
+    }
+    out.push('$');
+    Ok(json!({ "pattern": pattern, "regex": out }))
+}
+
 /// CRC16-CCITT in the XMODEM variant (poly 0x1021, init 0x0000, no reflection),
 /// exactly as Redis `crc16.c` computes it. Bitwise rather than table-driven for
 /// readability — key hashing is never hot. The standard CRC-16/XMODEM check
@@ -3225,6 +3305,11 @@ pub extern "C" fn redis__glob_escape(args: *const c_char) -> *const c_char {
 #[no_mangle]
 pub extern "C" fn redis__glob_unescape(args: *const c_char) -> *const c_char {
     ffi_call(args, op_glob_unescape)
+}
+
+#[no_mangle]
+pub extern "C" fn redis__glob_to_regex(args: *const c_char) -> *const c_char {
+    ffi_call(args, op_glob_to_regex)
 }
 
 #[no_mangle]
@@ -3780,6 +3865,33 @@ mod tests {
             json!("x*y")
         );
         assert!(op_glob_unescape(json!({})).is_err());
+    }
+
+    #[test]
+    fn glob_to_regex_translates_glob_metacharacters() {
+        let r = |p: &str| {
+            op_glob_to_regex(json!({ "pattern": p })).unwrap()["regex"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        // `*` and `?`, anchored to the whole key.
+        assert_eq!(r("user:*"), "^user:.*$");
+        assert_eq!(r("h?llo"), "^h.llo$");
+        // Consecutive `*` collapse to a single `.*`.
+        assert_eq!(r("a**b"), "^a.*b$");
+        // Regex metacharacters in literals are escaped.
+        assert_eq!(r("a.b+c"), "^a\\.b\\+c$");
+        // A glob `\x` escape becomes the literal x (regex-escaped if special).
+        assert_eq!(r("a\\*b"), "^a\\*b$");
+        assert_eq!(r("a\\.b"), "^a\\.b$");
+        // Character classes: ranges, negation, and the literal-dot-in-class case.
+        assert_eq!(r("[a-z]"), "^[a-z]$");
+        assert_eq!(r("[^0-9]"), "^[^0-9]$");
+        assert_eq!(r("key:[12]"), "^key:[12]$");
+        // An unterminated class is an error.
+        assert!(op_glob_to_regex(json!({ "pattern": "ab[cd" })).is_err());
+        assert!(op_glob_to_regex(json!({})).is_err());
     }
 
     #[test]
