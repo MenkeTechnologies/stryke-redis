@@ -1161,3 +1161,11 @@ fn Redis::compare_stream_id ($a, $b) {
     Redis::_decode("compare_stream_id", redis__compare_stream_id(to_json({ a => $a, b => $b })))->{cmp}
 }
 
+## Successor of a concrete stream entry $id (<ms>[-<seq>], bare <ms> taking seq
+## 0) — for an exclusive XRANGE/XREAD lower bound. Increments seq; a seq at the
+## u64 max rolls to <ms+1>-0. "-"/"+"/"$"/"*" and the absolute max have no
+## successor and die. Returns the next id string.
+fn Redis::next_stream_id ($id) {
+    Redis::_decode("next_stream_id", redis__next_stream_id(to_json({ id => $id })))->{id}
+}
+

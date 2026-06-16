@@ -2895,6 +2895,31 @@ fn op_compare_stream_id(v: Value) -> Result<Value> {
     Ok(json!({ "a": a, "b": b, "cmp": cmp }))
 }
 
+/// The smallest Redis Streams entry ID strictly greater than `id` — its
+/// successor — for building an exclusive lower bound when paging `XRANGE`/`XREAD`
+/// (everything after the last id you read). Increments the sequence; when the
+/// sequence is at `u64::MAX` it rolls over to `<ms+1>-0`. opts: `id` (a concrete
+/// `<ms>[-<seq>]`; a bare `<ms>` takes `seq` 0). `-`/`+`/`$`/`*` have no successor
+/// and are rejected, as is the absolute maximum (`ms` and `seq` both `u64::MAX`).
+/// Returns `{id}`. Pure.
+fn op_next_stream_id(v: Value) -> Result<Value> {
+    let id = v["id"].as_str().ok_or_else(|| anyhow!("missing id"))?;
+    let (rank, ms, seq) = resolve_stream_rank(id)?;
+    if rank != 1 {
+        return Err(anyhow!("stream id `{id}` is not a concrete entry id"));
+    }
+    let (nms, nseq) = if seq < u64::MAX {
+        (ms, seq + 1)
+    } else if ms < u64::MAX {
+        (ms + 1, 0)
+    } else {
+        return Err(anyhow!(
+            "stream id `{id}` is the maximum entry id; it has no successor"
+        ));
+    };
+    Ok(json!({ "id": format!("{nms}-{nseq}") }))
+}
+
 #[no_mangle]
 pub extern "C" fn redis__parse_url(args: *const c_char) -> *const c_char {
     ffi_call(args, op_parse_url)
@@ -2938,6 +2963,11 @@ pub extern "C" fn redis__build_stream_id(args: *const c_char) -> *const c_char {
 #[no_mangle]
 pub extern "C" fn redis__compare_stream_id(args: *const c_char) -> *const c_char {
     ffi_call(args, op_compare_stream_id)
+}
+
+#[no_mangle]
+pub extern "C" fn redis__next_stream_id(args: *const c_char) -> *const c_char {
+    ffi_call(args, op_next_stream_id)
 }
 
 #[cfg(test)]
@@ -3553,5 +3583,43 @@ mod tests {
         // garbage rejects.
         assert!(op_compare_stream_id(json!({"a": "x-1", "b": "5-0"})).is_err());
         assert!(op_compare_stream_id(json!({"a": "5-z", "b": "5-0"})).is_err());
+    }
+
+    #[test]
+    fn next_stream_id_is_the_successor_for_exclusive_ranges() {
+        let next = |id: &str| {
+            op_next_stream_id(json!({ "id": id })).unwrap()["id"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        // Ordinary increment of the sequence.
+        assert_eq!(next("5-0"), "5-1");
+        assert_eq!(next("1526919030474-55"), "1526919030474-56");
+        // A bare `<ms>` takes seq 0, so its successor is `<ms>-1`.
+        assert_eq!(next("5"), "5-1");
+        // Sequence at u64::MAX rolls over to the next millisecond, seq 0.
+        assert_eq!(next("5-18446744073709551615"), "6-0");
+        // The successor always compares strictly greater than the input.
+        for id in ["0-0", "5-0", "5", "5-18446744073709551615"] {
+            let n = next(id);
+            assert_eq!(
+                op_compare_stream_id(json!({"a": &n, "b": id})).unwrap()["cmp"],
+                json!(1),
+                "next({id}) = {n} must be > {id}"
+            );
+        }
+        // Special ids have no successor; neither does the absolute maximum.
+        assert!(op_next_stream_id(json!({"id": "-"})).is_err());
+        assert!(op_next_stream_id(json!({"id": "+"})).is_err());
+        assert!(op_next_stream_id(json!({"id": "$"})).is_err());
+        assert!(op_next_stream_id(json!({"id": "*"})).is_err());
+        assert!(op_next_stream_id(json!({
+            "id": "18446744073709551615-18446744073709551615"
+        }))
+        .is_err());
+        // Garbage and missing id reject.
+        assert!(op_next_stream_id(json!({"id": "x-1"})).is_err());
+        assert!(op_next_stream_id(json!({})).is_err());
     }
 }

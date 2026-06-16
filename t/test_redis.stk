@@ -165,4 +165,12 @@ assert_eq Redis::compare_stream_id("-", "+"), -1, "compare_stream_id: - below +"
 assert_dies fn { Redis::compare_stream_id("\$", "5-0") }, "compare_stream_id: \$ has no absolute position"
 assert_dies fn { Redis::compare_stream_id("5-0", "*") }, "compare_stream_id: * has no absolute position"
 
+# next_stream_id: successor for an exclusive XRANGE bound.
+assert_eq Redis::next_stream_id("5-0"), "5-1",  "next_stream_id: increments the sequence"
+assert_eq Redis::next_stream_id("5"),   "5-1",  "next_stream_id: bare <ms> takes seq 0"
+assert_eq Redis::next_stream_id("5-18446744073709551615"), "6-0", "next_stream_id: seq at max rolls to next ms"
+assert_eq Redis::compare_stream_id(Redis::next_stream_id("9-9"), "9-9"), 1, "next_stream_id: successor is strictly greater"
+assert_dies fn { Redis::next_stream_id("-") }, "next_stream_id: - has no successor"
+assert_dies fn { Redis::next_stream_id("\$") }, "next_stream_id: \$ has no successor"
+
 test_run
