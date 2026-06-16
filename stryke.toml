@@ -1,6 +1,6 @@
 [package]
 name = "stryke-redis"
-version = "0.9.0"
+version = "0.10.0"
 description = "Redis / Valkey client for stryke. cdylib loaded in-process — persistent connection cache per (url, db, auth)."
 authors = ["MenkeTechnologies"]
 license = "MIT"
@@ -164,6 +164,7 @@ exports = [
     "redis__same_slot",
     "redis__parse_stream_id",
     "redis__build_stream_id",
+    "redis__compare_stream_id",
 ]
 
 [scripts]

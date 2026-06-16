@@ -371,6 +371,7 @@ Redis::cluster_keyslot($key)      → { key, slot, hash_tag }   # CLUSTER KEYSLO
 Redis::same_slot($a, $b)          → { a, b, slot_a, slot_b, same_slot }   # do two keys co-locate (avoid CROSSSLOT in multi-key ops)?
 Redis::parse_stream_id($id)       → { ms, seq, special }   # stream entry id <ms>-<seq>; special - + $ * → min/max/last/auto
 Redis::build_stream_id(%opts)     → $id   # { ms, seq? } or { special } → stream entry id; inverse of parse_stream_id
+Redis::compare_stream_id($a, $b)  → -1|0|1   # order two stream ids by (ms, seq); bare <ms> → seq 0; - + below/above; $ * die
 ```
 
 `glob_match` is a faithful port of Redis's `stringmatchlen` — use it to filter

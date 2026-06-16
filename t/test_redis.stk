@@ -153,4 +153,16 @@ assert_eq Redis::build_stream_id(special => "auto"), "*", "build_stream_id: auto
 assert_eq Redis::build_stream_id(%{ Redis::parse_stream_id("1526919030474-55") }), "1526919030474-55", "build_stream_id: round-trips parse_stream_id"
 assert_dies fn { Redis::build_stream_id(special => "bogus") }, "build_stream_id: rejects an unknown special"
 
+# compare_stream_id: total order over stream entry IDs (ms, then seq).
+assert_eq Redis::compare_stream_id("5-0", "10-0"), -1, "compare_stream_id: ms dominates"
+assert_eq Redis::compare_stream_id("10-9", "5-99"), 1, "compare_stream_id: larger ms wins despite seq"
+assert_eq Redis::compare_stream_id("5-1", "5-2"), -1, "compare_stream_id: equal ms → seq breaks tie"
+assert_eq Redis::compare_stream_id("5-1", "5-1"), 0, "compare_stream_id: identical ids are equal"
+assert_eq Redis::compare_stream_id("5", "5-0"), 0, "compare_stream_id: bare <ms> takes seq 0"
+assert_eq Redis::compare_stream_id("-", "0-0"), -1, "compare_stream_id: - sorts below everything"
+assert_eq Redis::compare_stream_id("+", "999999999-0"), 1, "compare_stream_id: + sorts above everything"
+assert_eq Redis::compare_stream_id("-", "+"), -1, "compare_stream_id: - below +"
+assert_dies fn { Redis::compare_stream_id("\$", "5-0") }, "compare_stream_id: \$ has no absolute position"
+assert_dies fn { Redis::compare_stream_id("5-0", "*") }, "compare_stream_id: * has no absolute position"
+
 test_run

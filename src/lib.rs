@@ -2852,6 +2852,49 @@ fn op_build_stream_id(v: Value) -> Result<Value> {
     Ok(json!({ "id": id }))
 }
 
+/// A stream id resolved to a comparison rank. `-`/`+` sort below/above every
+/// concrete id; a concrete `<ms>[-<seq>]` ranks by `(ms, seq)` with a bare
+/// `<ms>` taking `seq` 0; `$`/`*` have no absolute position and are rejected.
+fn resolve_stream_rank(id: &str) -> Result<(u8, u64, u64)> {
+    match id {
+        "-" => Ok((0, 0, 0)),
+        "+" => Ok((2, u64::MAX, u64::MAX)),
+        "$" | "*" => Err(anyhow!(
+            "stream id `{id}` has no absolute position (not comparable)"
+        )),
+        _ => {
+            let (ms_str, seq) = match id.split_once('-') {
+                Some((m, s)) => (
+                    m,
+                    s.parse::<u64>()
+                        .map_err(|_| anyhow!("invalid stream id sequence `{s}`"))?,
+                ),
+                None => (id, 0),
+            };
+            let ms = ms_str
+                .parse::<u64>()
+                .map_err(|_| anyhow!("invalid stream id milliseconds `{ms_str}`"))?;
+            Ok((1, ms, seq))
+        }
+    }
+}
+
+/// Compare two Redis Streams entry IDs by their total order — entries are
+/// ordered by `(ms, seq)`. Resolves each id (a bare `<ms>` takes `seq` 0; `-`/`+`
+/// sort below/above everything), then compares. `$`/`*` have no absolute position
+/// and are rejected. opts: `a`, `b`. Returns `{a, b, cmp}` with `cmp` -1 (a<b),
+/// 0 (equal), or 1 (a>b). Pure.
+fn op_compare_stream_id(v: Value) -> Result<Value> {
+    let a = v["a"].as_str().ok_or_else(|| anyhow!("missing a"))?;
+    let b = v["b"].as_str().ok_or_else(|| anyhow!("missing b"))?;
+    let cmp = match resolve_stream_rank(a)?.cmp(&resolve_stream_rank(b)?) {
+        std::cmp::Ordering::Less => -1,
+        std::cmp::Ordering::Equal => 0,
+        std::cmp::Ordering::Greater => 1,
+    };
+    Ok(json!({ "a": a, "b": b, "cmp": cmp }))
+}
+
 #[no_mangle]
 pub extern "C" fn redis__parse_url(args: *const c_char) -> *const c_char {
     ffi_call(args, op_parse_url)
@@ -2890,6 +2933,11 @@ pub extern "C" fn redis__parse_stream_id(args: *const c_char) -> *const c_char {
 #[no_mangle]
 pub extern "C" fn redis__build_stream_id(args: *const c_char) -> *const c_char {
     ffi_call(args, op_build_stream_id)
+}
+
+#[no_mangle]
+pub extern "C" fn redis__compare_stream_id(args: *const c_char) -> *const c_char {
+    ffi_call(args, op_compare_stream_id)
 }
 
 #[cfg(test)]
@@ -3473,5 +3521,37 @@ mod tests {
         // Unknown special and missing ms reject.
         assert!(op_build_stream_id(json!({"special": "bogus"})).is_err());
         assert!(op_build_stream_id(json!({"seq": 1})).is_err());
+    }
+
+    #[test]
+    fn compare_stream_id_orders_by_ms_then_seq() {
+        let cmp = |a: &str, b: &str| {
+            op_compare_stream_id(json!({"a": a, "b": b})).unwrap()["cmp"]
+                .as_i64()
+                .unwrap()
+        };
+        // ms dominates seq.
+        assert_eq!(cmp("5-0", "10-0"), -1);
+        assert_eq!(cmp("10-9", "5-99"), 1);
+        // equal ms → seq breaks the tie.
+        assert_eq!(cmp("5-1", "5-2"), -1);
+        assert_eq!(cmp("5-2", "5-1"), 1);
+        assert_eq!(cmp("5-1", "5-1"), 0);
+        // a bare <ms> takes seq 0.
+        assert_eq!(cmp("5", "5-0"), 0);
+        assert_eq!(cmp("5", "5-1"), -1);
+        // `-`/`+` sort below/above every concrete id and each other.
+        assert_eq!(cmp("-", "0-0"), -1);
+        assert_eq!(cmp("+", "18446744073709551615-18446744073709551615"), 1);
+        assert_eq!(cmp("-", "+"), -1);
+        assert_eq!(cmp("+", "-"), 1);
+        assert_eq!(cmp("-", "-"), 0);
+        assert_eq!(cmp("+", "+"), 0);
+        // `$`/`*` have no absolute position → reject on either side.
+        assert!(op_compare_stream_id(json!({"a": "$", "b": "5-0"})).is_err());
+        assert!(op_compare_stream_id(json!({"a": "5-0", "b": "*"})).is_err());
+        // garbage rejects.
+        assert!(op_compare_stream_id(json!({"a": "x-1", "b": "5-0"})).is_err());
+        assert!(op_compare_stream_id(json!({"a": "5-z", "b": "5-0"})).is_err());
     }
 }

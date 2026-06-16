@@ -1154,3 +1154,10 @@ fn Redis::build_stream_id (%opts) {
     Redis::_decode("build_stream_id", redis__build_stream_id(to_json(\%opts)))->{id}
 }
 
+## Compare two Redis Streams entry IDs by their total order (ms, then seq).
+## A bare "<ms>" takes seq 0; "-"/"+" sort below/above every concrete id;
+## "$"/"*" have no absolute position and die. Returns -1 (a<b), 0, or 1 (a>b).
+fn Redis::compare_stream_id ($a, $b) {
+    Redis::_decode("compare_stream_id", redis__compare_stream_id(to_json({ a => $a, b => $b })))->{cmp}
+}
+
