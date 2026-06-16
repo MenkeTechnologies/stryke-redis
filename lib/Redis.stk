@@ -350,6 +350,15 @@ fn Redis::info (%opts) {
     Redis::_decode("info", redis__info(to_json($r)))->{info}
 }
 
+## Parse an INFO reply string into structured maps (pure, no round trip).
+## Returns a hashref { sections => { Section => { field => value } }, fields =>
+## { field => value }, names => [section names in order] }. Field values are kept
+## as raw strings (a complex k=v,k2=v2 value is not split). Pair with info():
+## Redis::parse_info(Redis::info()).
+fn Redis::parse_info ($info) {
+    Redis::_decode("parse_info", redis__parse_info(to_json({ info => $info })))
+}
+
 ## Redis DBSIZE — key count in the current DB.
 fn Redis::dbsize (%opts) {
     val $r = Redis::_req({}, \%opts)

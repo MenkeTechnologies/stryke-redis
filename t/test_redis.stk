@@ -90,6 +90,14 @@ if ($alive) {
 }
 
 # ── pure helpers (no connection — always run) ────────────────────────
+# parse_info: structure an INFO reply string into sections/fields/names.
+val $nfo = Redis::parse_info("# Server\r\nredis_version:7.4.0\r\nredis_mode:standalone\r\n\r\n# Keyspace\r\ndb0:keys=2,expires=1,avg_ttl=0\r\n")
+assert_eq join(",", @{ $nfo->{names} }), "Server,Keyspace", "parse_info: section order preserved"
+assert_eq $nfo->{sections}{Server}{redis_version}, "7.4.0", "parse_info: field grouped under its section"
+assert_eq $nfo->{sections}{Keyspace}{db0}, "keys=2,expires=1,avg_ttl=0", "parse_info: complex value kept raw"
+assert_eq $nfo->{fields}{redis_mode}, "standalone", "parse_info: flat field map spans sections"
+assert_eq scalar(@{ Redis::parse_info("")->{names} }), 0, "parse_info: empty reply yields no sections"
+
 # `\@` escapes the at-sign so stryke does not array-interpolate it.
 val $u = Redis::parse_url("redis://alice:s3cret\@cache.example.com:6380/2")
 assert_eq $u->{scheme},   "redis",             "parse_url: scheme"

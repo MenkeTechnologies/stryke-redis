@@ -314,7 +314,7 @@ Redis::script_exists $shas_or_aref, %opts → @bools
 Redis::publish    $channel, $message, %opts → $subscriber_count
 Redis::pubsub_channels %opts → @channels          # opts: pattern
 Redis::pubsub_numsub   $channels_or_aref, %opts → \%counts
-Redis::info       %opts → \%info                  # opts: section
+Redis::info       %opts → $info                   # raw INFO string; opts: section (parse with Redis::parse_info)
 Redis::dbsize     %opts → $count
 Redis::flushdb    %opts → \%resp                  # require confirm => 1
 Redis::flushall   %opts → 1                        # opts: async
@@ -363,6 +363,7 @@ Redis::zmpop      $keys_or_aref, %opts → [key, [[m,score]]] | undef  # opts: f
 ### Pure helpers (no connection)
 
 ```stryke
+Redis::parse_info($info)          → { sections:{Section:{field:value}}, fields:{field:value}, names:[...] }   # structure an INFO reply (values kept raw)
 Redis::parse_url($url)            → { scheme, tls, user, password, host, port, db }   # redis[s]://…
 Redis::build_url(%opts)           → $url      # parts → redis[s]:// URL; inverse of parse_url (opts: host, port, db, user, password, tls)
 Redis::redact_url($url)           → $url      # mask the password (user:***@) so the URL is safe to log; rest preserved

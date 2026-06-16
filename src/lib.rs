@@ -3007,6 +3007,58 @@ fn op_prev_stream_id(v: Value) -> Result<Value> {
     Ok(json!({ "id": format!("{pms}-{pseq}") }))
 }
 
+/// Parse the text reply of the `INFO` command into structured maps. The reply is
+/// `# Section` headers followed by `field:value` lines (CRLF-terminated, blank
+/// lines between sections). Returns `sections` — `{Section: {field: value}}` —
+/// plus a flat `fields` map of every field across sections and `names`, the
+/// section names in reply order. Field values are kept as raw strings (a complex
+/// `k=v,k2=v2` value is not further split, since not every `=` is a sub-map).
+/// Lines before the first header land in an empty-named (`""`) section. opts:
+/// `info` (or `value`) required. Pure.
+fn op_parse_info(v: Value) -> Result<Value> {
+    let text = v
+        .get("info")
+        .or_else(|| v.get("value"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("missing info"))?;
+    let mut sections = serde_json::Map::new();
+    let mut fields = serde_json::Map::new();
+    let mut names: Vec<Value> = Vec::new();
+    let mut section = String::new();
+    for raw in text.split('\n') {
+        let line = raw.strip_suffix('\r').unwrap_or(raw);
+        if line.is_empty() {
+            continue;
+        }
+        if let Some(header) = line.strip_prefix('#') {
+            section = header.trim().to_string();
+            if !sections.contains_key(&section) {
+                names.push(json!(section));
+                sections.insert(section.clone(), json!({}));
+            }
+            continue;
+        }
+        let Some((key, val)) = line.split_once(':') else {
+            continue;
+        };
+        let entry = sections.entry(section.clone()).or_insert_with(|| json!({}));
+        if names.iter().all(|n| n.as_str() != Some(section.as_str())) {
+            names.push(json!(section.clone()));
+        }
+        entry
+            .as_object_mut()
+            .expect("section is an object")
+            .insert(key.to_string(), json!(val));
+        fields.insert(key.to_string(), json!(val));
+    }
+    Ok(json!({ "sections": sections, "fields": fields, "names": names }))
+}
+
+#[no_mangle]
+pub extern "C" fn redis__parse_info(args: *const c_char) -> *const c_char {
+    ffi_call(args, op_parse_info)
+}
+
 #[no_mangle]
 pub extern "C" fn redis__parse_url(args: *const c_char) -> *const c_char {
     ffi_call(args, op_parse_url)
@@ -3830,5 +3882,40 @@ mod tests {
         // Garbage and missing id reject.
         assert!(op_prev_stream_id(json!({"id": "x-1"})).is_err());
         assert!(op_prev_stream_id(json!({})).is_err());
+    }
+
+    #[test]
+    fn parse_info_groups_fields_by_section() {
+        // A realistic CRLF reply with two sections and a complex value.
+        let text = "# Server\r\nredis_version:7.4.0\r\nredis_mode:standalone\r\n\r\n# Keyspace\r\ndb0:keys=2,expires=1,avg_ttl=0\r\n";
+        let v = op_parse_info(json!({ "info": text })).unwrap();
+        // Section order preserved.
+        assert_eq!(v["names"], json!(["Server", "Keyspace"]));
+        // Grouped per section.
+        assert_eq!(v["sections"]["Server"]["redis_version"], json!("7.4.0"));
+        assert_eq!(v["sections"]["Server"]["redis_mode"], json!("standalone"));
+        // A complex `k=v,…` value is kept raw (not split).
+        assert_eq!(
+            v["sections"]["Keyspace"]["db0"],
+            json!("keys=2,expires=1,avg_ttl=0")
+        );
+        // Flat field map spans all sections.
+        assert_eq!(v["fields"]["redis_version"], json!("7.4.0"));
+        assert_eq!(v["fields"]["db0"], json!("keys=2,expires=1,avg_ttl=0"));
+        // A value may itself contain a colon (split on the first only).
+        let v2 =
+            op_parse_info(json!({ "info": "# Server\r\nexecutable:/usr/bin/redis:server\r\n" }))
+                .unwrap();
+        assert_eq!(v2["fields"]["executable"], json!("/usr/bin/redis:server"));
+        // Bare `\n` line endings are tolerated; an empty reply yields empty maps.
+        assert_eq!(
+            op_parse_info(json!({ "info": "# X\na:1\n" })).unwrap()["sections"]["X"]["a"],
+            json!("1")
+        );
+        assert_eq!(
+            op_parse_info(json!({ "info": "" })).unwrap()["names"],
+            json!([])
+        );
+        assert!(op_parse_info(json!({})).is_err());
     }
 }
