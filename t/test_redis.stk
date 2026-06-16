@@ -106,6 +106,12 @@ assert_eq Redis::build_url(user => "alice", password => "s3cret", host => "cache
 assert_eq Redis::build_url(tls => 1, password => "pw", host => "h"), "rediss://:pw\@h", "build_url: tls + password-only userinfo"
 assert_eq Redis::build_url(host => "h"), "redis://h", "build_url: bare host, no userinfo"
 
+# redact_url: mask the password but keep the rest (safe to log; \@ escapes @).
+assert_eq Redis::redact_url("redis://alice:s3cret\@cache.example.com:6380/2"), "redis://alice:***\@cache.example.com:6380/2", "redact_url: masks user:password"
+assert_eq Redis::redact_url("rediss://:hunter2\@h:6379"), "rediss://:***\@h:6379", "redact_url: masks password-only userinfo"
+assert_eq Redis::redact_url("redis://alice\@h/0"), "redis://alice\@h/0", "redact_url: user-only userinfo unchanged"
+assert_eq Redis::redact_url("redis://h:6379/1"), "redis://h:6379/1", "redact_url: no userinfo unchanged"
+
 assert_eq Redis::glob_match("user:*", "user:42"),         1, "glob_match: star matches"
 assert_eq Redis::glob_match("user:*:s", "user:42:s"),     1, "glob_match: middle star"
 assert_eq Redis::glob_match("user:*:s", "user:42:x"),     0, "glob_match: suffix mismatch"

@@ -2621,6 +2621,40 @@ fn op_build_url(v: Value) -> Result<Value> {
     Ok(json!({"url": url}))
 }
 
+/// Redact the password in a Redis connection URL so it is safe to log — the
+/// password component of the userinfo (`user:password@` or `:password@`) is
+/// replaced with `***` while the scheme, user, host, port and db path are kept
+/// intact. A URL with no password (or no userinfo) is returned unchanged, as is a
+/// value with no `://`. opts: `url` (required). Returns `{url, redacted}`. Pure.
+fn op_redact_url(v: Value) -> Result<Value> {
+    let url = v["url"].as_str().ok_or_else(|| anyhow!("missing url"))?;
+    let redacted = match url.split_once("://") {
+        Some((scheme, rest)) => {
+            // Only the authority (up to the first `/`) can hold userinfo.
+            let (authority, path) = match rest.split_once('/') {
+                Some((a, p)) => (a, Some(p)),
+                None => (rest, None),
+            };
+            let new_authority = match authority.rsplit_once('@') {
+                Some((userinfo, hostport)) => {
+                    let masked = match userinfo.split_once(':') {
+                        Some((user, _pass)) => format!("{user}:***"),
+                        None => userinfo.to_string(), // user only, no password
+                    };
+                    format!("{masked}@{hostport}")
+                }
+                None => authority.to_string(),
+            };
+            match path {
+                Some(p) => format!("{scheme}://{new_authority}/{p}"),
+                None => format!("{scheme}://{new_authority}"),
+            }
+        }
+        None => url.to_string(),
+    };
+    Ok(json!({"url": url, "redacted": redacted}))
+}
+
 /// Match a string against a Redis glob pattern — a faithful port of Redis's
 /// `stringmatchlen`: `*` (any run), `?` (one char), `[...]` classes with
 /// ranges and `[^…]` negation, and `\` escapes. Case-sensitive.
@@ -2981,6 +3015,11 @@ pub extern "C" fn redis__parse_url(args: *const c_char) -> *const c_char {
 #[no_mangle]
 pub extern "C" fn redis__build_url(args: *const c_char) -> *const c_char {
     ffi_call(args, op_build_url)
+}
+
+#[no_mangle]
+pub extern "C" fn redis__redact_url(args: *const c_char) -> *const c_char {
+    ffi_call(args, op_redact_url)
 }
 
 #[no_mangle]
@@ -3435,6 +3474,34 @@ mod tests {
             op_build_url(json!({"user": "u", "host": "h", "db": 0})).unwrap()["url"],
             json!("redis://u@h/0")
         );
+    }
+
+    #[test]
+    fn redact_url_masks_only_the_password() {
+        let r = |u: &str| {
+            op_redact_url(json!({ "url": u })).unwrap()["redacted"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        // user:password → user:*** , the rest of the URL is preserved.
+        assert_eq!(
+            r("redis://alice:s3cret@cache.example.com:6380/2"),
+            "redis://alice:***@cache.example.com:6380/2"
+        );
+        // Password-only userinfo (the common requirepass form).
+        assert_eq!(r("rediss://:hunter2@h:6379"), "rediss://:***@h:6379");
+        // No password → unchanged (user-only, no userinfo, bare host).
+        assert_eq!(r("redis://alice@h/0"), "redis://alice@h/0");
+        assert_eq!(r("redis://h:6379/1"), "redis://h:6379/1");
+        // A query/path after the db is preserved.
+        assert_eq!(
+            r("rediss://u:p@h/0?ssl_cert_reqs=required"),
+            "rediss://u:***@h/0?ssl_cert_reqs=required"
+        );
+        // Not a recognizable URL → unchanged; missing arg errors.
+        assert_eq!(r("not-a-url"), "not-a-url");
+        assert!(op_redact_url(json!({})).is_err());
     }
 
     #[test]

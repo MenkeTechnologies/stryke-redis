@@ -365,6 +365,7 @@ Redis::zmpop      $keys_or_aref, %opts → [key, [[m,score]]] | undef  # opts: f
 ```stryke
 Redis::parse_url($url)            → { scheme, tls, user, password, host, port, db }   # redis[s]://…
 Redis::build_url(%opts)           → $url      # parts → redis[s]:// URL; inverse of parse_url (opts: host, port, db, user, password, tls)
+Redis::redact_url($url)           → $url      # mask the password (user:***@) so the URL is safe to log; rest preserved
 Redis::glob_match($pattern, $key) → 1 | ""   # Redis KEYS/SCAN glob (* ? [a-z] [^…] \), matched client-side
 Redis::glob_escape($value)        → $escaped # backslash-escape * ? [ ] \ so glob_match treats $value literally
 Redis::glob_unescape($escaped)    → $value   # inverse of glob_escape: \* \? \[ \] \\ → literal chars (single left-to-right scan)

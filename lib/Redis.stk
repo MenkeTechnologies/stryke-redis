@@ -1112,6 +1112,14 @@ fn Redis::build_url (%opts) {
     Redis::_decode("build_url", redis__build_url(to_json(\%opts)))->{url}
 }
 
+## Redact the password in a Redis URL so it is safe to log — the password in the
+## userinfo (user:password@ or :password@) becomes "***", the rest of the URL is
+## kept intact. A URL with no password is returned unchanged. Returns the redacted
+## URL string.
+fn Redis::redact_url ($url) {
+    Redis::_decode("redact_url", redis__redact_url(to_json({ url => $url })))->{redacted}
+}
+
 ## True if $key matches a Redis glob $pattern (KEYS/SCAN syntax: * ? [a-z]
 ## [^…] \) — matched client-side, no round trip.
 fn Redis::glob_match ($pattern, $key) {
