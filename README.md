@@ -373,6 +373,7 @@ Redis::parse_stream_id($id)       → { ms, seq, special }   # stream entry id <
 Redis::build_stream_id(%opts)     → $id   # { ms, seq? } or { special } → stream entry id; inverse of parse_stream_id
 Redis::compare_stream_id($a, $b)  → -1|0|1   # order two stream ids by (ms, seq); bare <ms> → seq 0; - + below/above; $ * die
 Redis::next_stream_id($id)        → $id   # successor of a concrete entry id (exclusive XRANGE bound); seq+1, rolls <ms>-MAX → <ms+1>-0
+Redis::prev_stream_id($id)        → $id   # predecessor (exclusive XREVRANGE bound); seq-1, borrows <ms>-0 → <ms-1>-MAX; mirror of next_stream_id
 ```
 
 `glob_match` is a faithful port of Redis's `stringmatchlen` — use it to filter

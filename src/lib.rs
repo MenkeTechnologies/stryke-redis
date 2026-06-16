@@ -2920,6 +2920,31 @@ fn op_next_stream_id(v: Value) -> Result<Value> {
     Ok(json!({ "id": format!("{nms}-{nseq}") }))
 }
 
+/// The largest Redis Streams entry ID strictly less than `id` — its predecessor,
+/// the mirror of `next_stream_id` — for building an exclusive upper bound when
+/// paging `XREVRANGE` (everything before the last id you read). Decrements the
+/// sequence; when the sequence is `0` it borrows down to `<ms-1>-<u64::MAX>`.
+/// opts: `id` (a concrete `<ms>[-<seq>]`; a bare `<ms>` takes `seq` 0).
+/// `-`/`+`/`$`/`*` have no predecessor and are rejected, as is the absolute
+/// minimum (`0-0`). Returns `{id}`. Pure.
+fn op_prev_stream_id(v: Value) -> Result<Value> {
+    let id = v["id"].as_str().ok_or_else(|| anyhow!("missing id"))?;
+    let (rank, ms, seq) = resolve_stream_rank(id)?;
+    if rank != 1 {
+        return Err(anyhow!("stream id `{id}` is not a concrete entry id"));
+    }
+    let (pms, pseq) = if seq > 0 {
+        (ms, seq - 1)
+    } else if ms > 0 {
+        (ms - 1, u64::MAX)
+    } else {
+        return Err(anyhow!(
+            "stream id `{id}` is the minimum entry id; it has no predecessor"
+        ));
+    };
+    Ok(json!({ "id": format!("{pms}-{pseq}") }))
+}
+
 #[no_mangle]
 pub extern "C" fn redis__parse_url(args: *const c_char) -> *const c_char {
     ffi_call(args, op_parse_url)
@@ -2968,6 +2993,11 @@ pub extern "C" fn redis__compare_stream_id(args: *const c_char) -> *const c_char
 #[no_mangle]
 pub extern "C" fn redis__next_stream_id(args: *const c_char) -> *const c_char {
     ffi_call(args, op_next_stream_id)
+}
+
+#[no_mangle]
+pub extern "C" fn redis__prev_stream_id(args: *const c_char) -> *const c_char {
+    ffi_call(args, op_prev_stream_id)
 }
 
 #[cfg(test)]
@@ -3621,5 +3651,51 @@ mod tests {
         // Garbage and missing id reject.
         assert!(op_next_stream_id(json!({"id": "x-1"})).is_err());
         assert!(op_next_stream_id(json!({})).is_err());
+    }
+
+    #[test]
+    fn prev_stream_id_is_the_predecessor_and_mirrors_next() {
+        let prev = |id: &str| {
+            op_prev_stream_id(json!({ "id": id })).unwrap()["id"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        let next = |id: &str| {
+            op_next_stream_id(json!({ "id": id })).unwrap()["id"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        // Ordinary decrement of the sequence.
+        assert_eq!(prev("5-1"), "5-0");
+        assert_eq!(prev("1526919030474-56"), "1526919030474-55");
+        // A bare `<ms>` takes seq 0, so its predecessor borrows: `<ms-1>-MAX`.
+        assert_eq!(prev("5"), "4-18446744073709551615");
+        // Seq 0 borrows down to the previous millisecond at u64::MAX.
+        assert_eq!(prev("6-0"), "5-18446744073709551615");
+        // The predecessor always compares strictly less than the input.
+        for id in ["5-1", "6-0", "1-0", "18446744073709551615-0"] {
+            let p = prev(id);
+            assert_eq!(
+                op_compare_stream_id(json!({"a": &p, "b": id})).unwrap()["cmp"],
+                json!(-1),
+                "prev({id}) = {p} must be < {id}"
+            );
+        }
+        // prev and next are exact inverses on concrete ids.
+        for id in ["5-0", "5-1", "6-0", "1526919030474-55"] {
+            assert_eq!(prev(&next(id)), id, "prev(next({id})) must round-trip");
+            assert_eq!(next(&prev(id)), id, "next(prev({id})) must round-trip");
+        }
+        // Special ids have no predecessor; neither does the absolute minimum 0-0.
+        assert!(op_prev_stream_id(json!({"id": "-"})).is_err());
+        assert!(op_prev_stream_id(json!({"id": "+"})).is_err());
+        assert!(op_prev_stream_id(json!({"id": "$"})).is_err());
+        assert!(op_prev_stream_id(json!({"id": "*"})).is_err());
+        assert!(op_prev_stream_id(json!({"id": "0-0"})).is_err());
+        // Garbage and missing id reject.
+        assert!(op_prev_stream_id(json!({"id": "x-1"})).is_err());
+        assert!(op_prev_stream_id(json!({})).is_err());
     }
 }

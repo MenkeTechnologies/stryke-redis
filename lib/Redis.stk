@@ -1169,3 +1169,11 @@ fn Redis::next_stream_id ($id) {
     Redis::_decode("next_stream_id", redis__next_stream_id(to_json({ id => $id })))->{id}
 }
 
+## Predecessor of a concrete stream entry $id — mirror of next_stream_id, for an
+## exclusive XREVRANGE upper bound. Decrements seq; a seq at 0 borrows down to
+## <ms-1>-<u64 max>. "-"/"+"/"$"/"*" and the absolute minimum 0-0 have no
+## predecessor and die. Returns the previous id string.
+fn Redis::prev_stream_id ($id) {
+    Redis::_decode("prev_stream_id", redis__prev_stream_id(to_json({ id => $id })))->{id}
+}
+

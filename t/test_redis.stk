@@ -173,4 +173,14 @@ assert_eq Redis::compare_stream_id(Redis::next_stream_id("9-9"), "9-9"), 1, "nex
 assert_dies fn { Redis::next_stream_id("-") }, "next_stream_id: - has no successor"
 assert_dies fn { Redis::next_stream_id("\$") }, "next_stream_id: \$ has no successor"
 
+# prev_stream_id: predecessor for an exclusive XREVRANGE bound (mirror of next).
+assert_eq Redis::prev_stream_id("5-1"), "5-0",  "prev_stream_id: decrements the sequence"
+assert_eq Redis::prev_stream_id("5"),   "4-18446744073709551615", "prev_stream_id: bare <ms> borrows to <ms-1>-MAX"
+assert_eq Redis::prev_stream_id("6-0"), "5-18446744073709551615", "prev_stream_id: seq 0 borrows to previous ms"
+assert_eq Redis::compare_stream_id(Redis::prev_stream_id("9-9"), "9-9"), -1, "prev_stream_id: predecessor is strictly less"
+# prev/next are inverses.
+assert_eq Redis::prev_stream_id(Redis::next_stream_id("1526919030474-55")), "1526919030474-55", "prev_stream_id: inverts next_stream_id"
+assert_dies fn { Redis::prev_stream_id("0-0") }, "prev_stream_id: 0-0 has no predecessor"
+assert_dies fn { Redis::prev_stream_id("\$") }, "prev_stream_id: \$ has no predecessor"
+
 test_run
