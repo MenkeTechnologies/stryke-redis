@@ -98,6 +98,18 @@ assert_eq $nfo->{sections}{Keyspace}{db0}, "keys=2,expires=1,avg_ttl=0", "parse_
 assert_eq $nfo->{fields}{redis_mode}, "standalone", "parse_info: flat field map spans sections"
 assert_eq scalar(@{ Redis::parse_info("")->{names} }), 0, "parse_info: empty reply yields no sections"
 
+# parse_client_info: structure a CLIENT INFO / CLIENT LIST reply.
+val $ci = Redis::parse_client_info("id=3 addr=127.0.0.1:50858 name= db=0 cmd=client|info")
+assert_eq scalar(@{ $ci->{clients} }), 1,           "parse_client_info: one line → one client"
+assert_eq $ci->{clients}[0]{id}, "3",               "parse_client_info: id field"
+assert_eq $ci->{clients}[0]{addr}, "127.0.0.1:50858", "parse_client_info: addr field"
+assert_eq $ci->{clients}[0]{name}, "",              "parse_client_info: empty value preserved"
+assert_eq $ci->{clients}[0]{cmd}, "client|info",    "parse_client_info: pipe in cmd survives"
+val $cl = Redis::parse_client_info("id=1 db=0\nid=2 db=1\n")
+assert_eq scalar(@{ $cl->{clients} }), 2,           "parse_client_info: one client per line"
+assert_eq $cl->{clients}[1]{db}, "1",               "parse_client_info: second client"
+assert_eq scalar(@{ Redis::parse_client_info("")->{clients} }), 0, "parse_client_info: empty reply yields no clients"
+
 # `\@` escapes the at-sign so stryke does not array-interpolate it.
 val $u = Redis::parse_url("redis://alice:s3cret\@cache.example.com:6380/2")
 assert_eq $u->{scheme},   "redis",             "parse_url: scheme"

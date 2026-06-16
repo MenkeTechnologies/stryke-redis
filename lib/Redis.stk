@@ -359,6 +359,15 @@ fn Redis::parse_info ($info) {
     Redis::_decode("parse_info", redis__parse_info(to_json({ info => $info })))
 }
 
+## Parse a CLIENT INFO / CLIENT LIST reply (pure) — each connection is a line of
+## space-separated field=value pairs. Returns a hashref { clients => [ { field =>
+## value }, … ] }, one entry per non-empty line, so client_info() yields a single
+## client and client_list() yields one per connection. Empty values (name=) are
+## preserved. Pair with client_list(): Redis::parse_client_info(Redis::client_list()).
+fn Redis::parse_client_info ($info) {
+    Redis::_decode("parse_client_info", redis__parse_client_info(to_json({ info => $info })))
+}
+
 ## Redis DBSIZE — key count in the current DB.
 fn Redis::dbsize (%opts) {
     val $r = Redis::_req({}, \%opts)

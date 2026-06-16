@@ -3054,9 +3054,44 @@ fn op_parse_info(v: Value) -> Result<Value> {
     Ok(json!({ "sections": sections, "fields": fields, "names": names }))
 }
 
+/// Parse a `CLIENT INFO` / `CLIENT LIST` reply — distinct from the `INFO` format
+/// (`op_parse_info`): each connection is one line of space-separated `field=value`
+/// pairs (`id=3 addr=127.0.0.1:50858 name= db=0 cmd=client|info …`). Returns
+/// `clients` — one `{field: value}` map per non-empty line — so `CLIENT INFO`
+/// (one line) yields a single-element list and `CLIENT LIST` (many) yields one
+/// entry per connection. Values are kept as raw strings (empty values like
+/// `name=` survive). opts: `info` (or `value`) required. Pure.
+fn op_parse_client_info(v: Value) -> Result<Value> {
+    let text = v
+        .get("info")
+        .or_else(|| v.get("value"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("missing info"))?;
+    let mut clients: Vec<Value> = Vec::new();
+    for raw in text.split('\n') {
+        let line = raw.strip_suffix('\r').unwrap_or(raw).trim();
+        if line.is_empty() {
+            continue;
+        }
+        let mut fields = serde_json::Map::new();
+        for token in line.split_whitespace() {
+            if let Some((k, val)) = token.split_once('=') {
+                fields.insert(k.to_string(), json!(val));
+            }
+        }
+        clients.push(Value::Object(fields));
+    }
+    Ok(json!({ "clients": clients }))
+}
+
 #[no_mangle]
 pub extern "C" fn redis__parse_info(args: *const c_char) -> *const c_char {
     ffi_call(args, op_parse_info)
+}
+
+#[no_mangle]
+pub extern "C" fn redis__parse_client_info(args: *const c_char) -> *const c_char {
+    ffi_call(args, op_parse_client_info)
 }
 
 #[no_mangle]
@@ -3917,5 +3952,40 @@ mod tests {
             json!([])
         );
         assert!(op_parse_info(json!({})).is_err());
+    }
+
+    #[test]
+    fn parse_client_info_splits_space_separated_pairs_per_line() {
+        // CLIENT INFO: a single line of `field=value` pairs.
+        let one = "id=3 addr=127.0.0.1:50858 name= db=0 cmd=client|info";
+        let v = op_parse_client_info(json!({ "info": one })).unwrap();
+        let clients = v["clients"].as_array().unwrap();
+        assert_eq!(clients.len(), 1, "one line → one client");
+        assert_eq!(clients[0]["id"], json!("3"));
+        assert_eq!(clients[0]["addr"], json!("127.0.0.1:50858"));
+        // An empty value (`name=`) is preserved.
+        assert_eq!(clients[0]["name"], json!(""));
+        // A `|`-containing command value survives.
+        assert_eq!(clients[0]["cmd"], json!("client|info"));
+        // CLIENT LIST: one client per line.
+        let many = "id=1 addr=10.0.0.1:6379 db=0\nid=2 addr=10.0.0.2:6379 db=1\n";
+        let lv = op_parse_client_info(json!({ "info": many })).unwrap();
+        let lc = lv["clients"].as_array().unwrap();
+        assert_eq!(lc.len(), 2);
+        assert_eq!(lc[1]["id"], json!("2"));
+        assert_eq!(lc[1]["db"], json!("1"));
+        // `value` alias; an empty reply yields no clients.
+        assert_eq!(
+            op_parse_client_info(json!({ "value": "id=9 db=0" })).unwrap()["clients"][0]["id"],
+            json!("9")
+        );
+        assert_eq!(
+            op_parse_client_info(json!({ "info": "" })).unwrap()["clients"]
+                .as_array()
+                .unwrap()
+                .len(),
+            0
+        );
+        assert!(op_parse_client_info(json!({})).is_err());
     }
 }
