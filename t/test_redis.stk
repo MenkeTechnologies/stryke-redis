@@ -110,6 +110,20 @@ assert_eq scalar(@{ $cl->{clients} }), 2,           "parse_client_info: one clie
 assert_eq $cl->{clients}[1]{db}, "1",               "parse_client_info: second client"
 assert_eq scalar(@{ Redis::parse_client_info("")->{clients} }), 0, "parse_client_info: empty reply yields no clients"
 
+# parse_cluster_nodes: structure a CLUSTER NODES reply.
+val $cn = Redis::parse_cluster_nodes("e7d1eecce10fd6bb5eb35b9f99a514335d9ba9ca 127.0.0.1:30001\@31001,host1 myself,master - 0 1700000000000 1 connected 0-5460\nabcabcabcabcabcabcabcabcabcabcabcabcabc1 127.0.0.1:30002\@31002 slave e7d1eecce10fd6bb5eb35b9f99a514335d9ba9ca 0 1700000000070 3 connected\n")
+assert_eq scalar(@{ $cn->{nodes} }), 2,                  "parse_cluster_nodes: two node lines"
+assert_eq $cn->{nodes}[0]{host}, "127.0.0.1",           "parse_cluster_nodes: host split from address"
+assert_eq $cn->{nodes}[0]{port}, 30001,                 "parse_cluster_nodes: port parsed"
+assert_eq $cn->{nodes}[0]{cport}, 31001,                "parse_cluster_nodes: cluster bus port parsed"
+assert_eq $cn->{nodes}[0]{hostname}, "host1",           "parse_cluster_nodes: optional hostname"
+assert_eq $cn->{nodes}[0]{role}, "master",              "parse_cluster_nodes: role from flags"
+assert_ok $cn->{nodes}[0]{myself},                      "parse_cluster_nodes: myself flag"
+assert_ok !defined($cn->{nodes}[0]{master}),            "parse_cluster_nodes: master `-` → undef"
+assert_eq join(",", $cn->{nodes}[0]{slots}[0]->@*), "0,5460", "parse_cluster_nodes: slot range as [start,end]"
+assert_eq $cn->{nodes}[1]{role}, "slave",               "parse_cluster_nodes: replica role"
+assert_eq $cn->{nodes}[1]{master}, "e7d1eecce10fd6bb5eb35b9f99a514335d9ba9ca", "parse_cluster_nodes: replica's master id"
+
 # `\@` escapes the at-sign so stryke does not array-interpolate it.
 val $u = Redis::parse_url("redis://alice:s3cret\@cache.example.com:6380/2")
 assert_eq $u->{scheme},   "redis",             "parse_url: scheme"

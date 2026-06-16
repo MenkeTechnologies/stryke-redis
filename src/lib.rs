@@ -3084,9 +3084,112 @@ fn op_parse_client_info(v: Value) -> Result<Value> {
     Ok(json!({ "clients": clients }))
 }
 
+/// Parse the output of `CLUSTER NODES` — one node per line, distinct from
+/// `parse_info` (sectioned `key:value`) and `parse_client_info` (space-separated
+/// `field=value`). Each line is `<id> <ip:port@cport[,hostname]> <flags> <master>
+/// <ping-sent> <pong-recv> <config-epoch> <link-state> <slot>…`. The address is
+/// split into `host`/`port`/`cport`/`hostname`; `flags` becomes an array (with
+/// `myself`/`role` lifted); `master` `-` becomes null; the numeric fields are
+/// parsed; and each trailing slot token is decoded as a `[start,end]` range
+/// (a single slot is `[n,n]`), while `[slot-<-node]`/`[slot->-node]` go to
+/// `importing`/`migrating`. opts: `nodes` (or `value`). Returns `{nodes:[…]}`.
+/// Pure.
+fn op_parse_cluster_nodes(v: Value) -> Result<Value> {
+    let text = v
+        .get("nodes")
+        .or_else(|| v.get("value"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("missing nodes"))?;
+    let mut nodes: Vec<Value> = Vec::new();
+    for raw in text.split('\n') {
+        let line = raw.strip_suffix('\r').unwrap_or(raw).trim();
+        if line.is_empty() {
+            continue;
+        }
+        let cols: Vec<&str> = line.split_whitespace().collect();
+        if cols.len() < 8 {
+            return Err(anyhow!("cluster node line has fewer than 8 fields: {line}"));
+        }
+        // Address: ip:port@cport[,hostname]
+        let addr = cols[1];
+        let (ipport, cport_host) = addr.split_once('@').unwrap_or((addr, ""));
+        let (host, port) = match ipport.rsplit_once(':') {
+            Some((h, p)) => (h.to_string(), p.parse::<u32>().ok()),
+            None => (ipport.to_string(), None),
+        };
+        let (cport_str, hostname) = match cport_host.split_once(',') {
+            Some((c, h)) => (c, Some(h.to_string())),
+            None => (cport_host, None),
+        };
+        let cport = cport_str.parse::<u32>().ok();
+        // Flags.
+        let flags: Vec<&str> = if cols[2] == "noflags" {
+            Vec::new()
+        } else {
+            cols[2].split(',').collect()
+        };
+        let myself = flags.contains(&"myself");
+        let role = if flags.contains(&"master") {
+            Some("master")
+        } else if flags.contains(&"slave") {
+            Some("slave")
+        } else {
+            None
+        };
+        let master = if cols[3] == "-" {
+            Value::Null
+        } else {
+            json!(cols[3])
+        };
+        let num = |s: &str| s.parse::<u64>().map(|n| json!(n)).unwrap_or(json!(s));
+        // Slots (fields 8+).
+        let mut slots: Vec<Value> = Vec::new();
+        let mut migrating: Vec<Value> = Vec::new();
+        let mut importing: Vec<Value> = Vec::new();
+        for tok in &cols[8..] {
+            if let Some(inner) = tok.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+                if let Some((slot, node)) = inner.split_once("-<-") {
+                    importing.push(json!({"slot": num(slot), "node": node}));
+                } else if let Some((slot, node)) = inner.split_once("->-") {
+                    migrating.push(json!({"slot": num(slot), "node": node}));
+                }
+            } else if let Some((a, b)) = tok.split_once('-') {
+                slots.push(json!([num(a), num(b)]));
+            } else {
+                slots.push(json!([num(tok), num(tok)]));
+            }
+        }
+        nodes.push(json!({
+            "id": cols[0],
+            "addr": addr,
+            "host": host,
+            "port": port,
+            "cport": cport,
+            "hostname": hostname,
+            "flags": flags,
+            "myself": myself,
+            "role": role,
+            "master": master,
+            "ping_sent": num(cols[4]),
+            "pong_recv": num(cols[5]),
+            "config_epoch": num(cols[6]),
+            "link_state": cols[7],
+            "slots": slots,
+            "migrating": migrating,
+            "importing": importing,
+        }));
+    }
+    Ok(json!({ "nodes": nodes }))
+}
+
 #[no_mangle]
 pub extern "C" fn redis__parse_info(args: *const c_char) -> *const c_char {
     ffi_call(args, op_parse_info)
+}
+
+#[no_mangle]
+pub extern "C" fn redis__parse_cluster_nodes(args: *const c_char) -> *const c_char {
+    ffi_call(args, op_parse_cluster_nodes)
 }
 
 #[no_mangle]
@@ -3987,5 +4090,63 @@ mod tests {
             0
         );
         assert!(op_parse_client_info(json!({})).is_err());
+    }
+
+    #[test]
+    fn parse_cluster_nodes_decomposes_each_node_line() {
+        let text = "e7d1eecce10fd6bb5eb35b9f99a514335d9ba9ca 127.0.0.1:30001@31001,host1 myself,master - 0 1700000000000 1 connected 0-5460\n\
+                    07c37dfeb235213a872192d90877d0cd55635b91 127.0.0.1:30002@31002 master - 0 1700000000050 2 connected 5461-10922 [77->-e7d1eecce10fd6bb5eb35b9f99a514335d9ba9ca]\n\
+                    abcabcabcabcabcabcabcabcabcabcabcabcabc1 127.0.0.1:30003@31003 slave e7d1eecce10fd6bb5eb35b9f99a514335d9ba9ca 0 1700000000070 3 connected\n";
+        let v = op_parse_cluster_nodes(json!({ "nodes": text })).unwrap();
+        let nodes = v["nodes"].as_array().unwrap();
+        assert_eq!(nodes.len(), 3, "three node lines");
+        // Node 0: myself master, address split, a slot range.
+        let n0 = &nodes[0];
+        assert_eq!(n0["id"], json!("e7d1eecce10fd6bb5eb35b9f99a514335d9ba9ca"));
+        assert_eq!(n0["host"], json!("127.0.0.1"));
+        assert_eq!(n0["port"], json!(30001));
+        assert_eq!(n0["cport"], json!(31001));
+        assert_eq!(n0["hostname"], json!("host1"));
+        assert_eq!(n0["myself"], json!(true));
+        assert_eq!(n0["role"], json!("master"));
+        assert_eq!(n0["master"], Value::Null, "a master has `-` → null");
+        assert_eq!(n0["link_state"], json!("connected"));
+        assert_eq!(n0["config_epoch"], json!(1));
+        assert_eq!(
+            n0["slots"],
+            json!([[0, 5460]]),
+            "a range becomes [start,end]"
+        );
+        // Node 1: a migrating slot is lifted out of `slots`.
+        let n1 = &nodes[1];
+        assert_eq!(n1["hostname"], Value::Null, "no hostname → null");
+        assert_eq!(n1["slots"], json!([[5461, 10922]]));
+        assert_eq!(n1["migrating"][0]["slot"], json!(77));
+        assert_eq!(
+            n1["migrating"][0]["node"],
+            json!("e7d1eecce10fd6bb5eb35b9f99a514335d9ba9ca")
+        );
+        // Node 2: a slave with a master id and no slots.
+        let n2 = &nodes[2];
+        assert_eq!(n2["role"], json!("slave"));
+        assert_eq!(
+            n2["master"],
+            json!("e7d1eecce10fd6bb5eb35b9f99a514335d9ba9ca")
+        );
+        assert_eq!(n2["slots"].as_array().unwrap().len(), 0);
+        // Importing notation, a bare single slot, `value` alias, errors.
+        let imp = op_parse_cluster_nodes(json!({
+            "value": "id1 1.2.3.4:7000@17000 master - 0 0 5 connected 42 [93-<-id2]"
+        }))
+        .unwrap();
+        assert_eq!(
+            imp["nodes"][0]["slots"],
+            json!([[42, 42]]),
+            "single slot → [n,n]"
+        );
+        assert_eq!(imp["nodes"][0]["importing"][0]["slot"], json!(93));
+        assert_eq!(imp["nodes"][0]["importing"][0]["node"], json!("id2"));
+        assert!(op_parse_cluster_nodes(json!({"nodes": "too few fields here"})).is_err());
+        assert!(op_parse_cluster_nodes(json!({})).is_err());
     }
 }

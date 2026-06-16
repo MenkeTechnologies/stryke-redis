@@ -365,6 +365,7 @@ Redis::zmpop      $keys_or_aref, %opts → [key, [[m,score]]] | undef  # opts: f
 ```stryke
 Redis::parse_info($info)          → { sections:{Section:{field:value}}, fields:{field:value}, names:[...] }   # structure an INFO reply (values kept raw)
 Redis::parse_client_info($info)   → { clients:[{field:value}] }   # structure a CLIENT INFO/LIST reply (space-separated field=value per line)
+Redis::parse_cluster_nodes($nodes) → { nodes:[{id,host,port,cport,hostname,flags,role,master,slots:[[s,e]],importing,migrating,…}] }   # structure a CLUSTER NODES reply
 Redis::parse_url($url)            → { scheme, tls, user, password, host, port, db }   # redis[s]://…
 Redis::build_url(%opts)           → $url      # parts → redis[s]:// URL; inverse of parse_url (opts: host, port, db, user, password, tls)
 Redis::redact_url($url)           → $url      # mask the password (user:***@) so the URL is safe to log; rest preserved

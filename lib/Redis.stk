@@ -368,6 +368,16 @@ fn Redis::parse_client_info ($info) {
     Redis::_decode("parse_client_info", redis__parse_client_info(to_json({ info => $info })))
 }
 
+## Parse a CLUSTER NODES reply (pure) — one node per line, distinct from
+## parse_info and parse_client_info. Each node hashref carries id, addr (split
+## into host/port/cport/hostname), flags (array, with myself/role lifted), master
+## (undef when "-"), the numeric ping_sent/pong_recv/config_epoch, link_state, and
+## slots as [start,end] ranges plus importing/migrating lists. Returns a hashref
+## { nodes => [ { … }, … ] }.
+fn Redis::parse_cluster_nodes ($nodes) {
+    Redis::_decode("parse_cluster_nodes", redis__parse_cluster_nodes(to_json({ nodes => $nodes })))
+}
+
 ## Redis DBSIZE — key count in the current DB.
 fn Redis::dbsize (%opts) {
     val $r = Redis::_req({}, \%opts)
