@@ -2994,6 +2994,37 @@ fn op_build_stream_id(v: Value) -> Result<Value> {
     Ok(json!({ "id": id }))
 }
 
+/// The inclusive stream-id pair for an `XRANGE` over a `[start_ms, end_ms]` time
+/// window — the idiomatic "read a stream by time". `start` is `{start_ms}-0` (the
+/// first id possible in that millisecond) and `end` is `{end_ms}-<u64::MAX>` (the
+/// last, so every entry produced during `end_ms` is included). Both bounds are
+/// inclusive; `end_ms` must be `>= start_ms`. opts: `start_ms` (or `start`),
+/// `end_ms` (or `end`), required non-negative millisecond timestamps. Returns
+/// `{start, end, start_ms, end_ms}`. Pure.
+fn op_stream_id_range(opts: Value) -> Result<Value> {
+    let start_ms = opts
+        .get("start_ms")
+        .or_else(|| opts.get("start"))
+        .and_then(Value::as_u64)
+        .ok_or_else(|| anyhow!("missing start_ms (a non-negative millisecond timestamp)"))?;
+    let end_ms = opts
+        .get("end_ms")
+        .or_else(|| opts.get("end"))
+        .and_then(Value::as_u64)
+        .ok_or_else(|| anyhow!("missing end_ms (a non-negative millisecond timestamp)"))?;
+    if end_ms < start_ms {
+        return Err(anyhow!(
+            "end_ms ({end_ms}) must be >= start_ms ({start_ms})"
+        ));
+    }
+    Ok(json!({
+        "start": format!("{start_ms}-0"),
+        "end": format!("{end_ms}-{}", u64::MAX),
+        "start_ms": start_ms,
+        "end_ms": end_ms,
+    }))
+}
+
 /// A stream id resolved to a comparison rank. `-`/`+` sort below/above every
 /// concrete id; a concrete `<ms>[-<seq>]` ranks by `(ms, seq)` with a bare
 /// `<ms>` taking `seq` 0; `$`/`*` have no absolute position and are rejected.
@@ -3330,6 +3361,11 @@ pub extern "C" fn redis__parse_stream_id(args: *const c_char) -> *const c_char {
 #[no_mangle]
 pub extern "C" fn redis__build_stream_id(args: *const c_char) -> *const c_char {
     ffi_call(args, op_build_stream_id)
+}
+
+#[no_mangle]
+pub extern "C" fn redis__stream_id_range(args: *const c_char) -> *const c_char {
+    ffi_call(args, op_stream_id_range)
 }
 
 #[no_mangle]
@@ -4016,6 +4052,39 @@ mod tests {
         // Unknown special and missing ms reject.
         assert!(op_build_stream_id(json!({"special": "bogus"})).is_err());
         assert!(op_build_stream_id(json!({"seq": 1})).is_err());
+    }
+
+    #[test]
+    fn stream_id_range_builds_the_inclusive_xrange_window() {
+        let v = op_stream_id_range(json!({"start_ms": 1000u64, "end_ms": 2000u64})).unwrap();
+        // start is the first id of start_ms; end is the last id of end_ms.
+        assert_eq!(v["start"], json!("1000-0"));
+        assert_eq!(v["end"], json!("2000-18446744073709551615"));
+        assert_eq!(v["start_ms"], json!(1000));
+        assert_eq!(v["end_ms"], json!(2000));
+        // A single-millisecond window covers the whole sequence space of that ms.
+        let one = op_stream_id_range(json!({"start": 500u64, "end": 500u64})).unwrap();
+        assert_eq!(one["start"], json!("500-0"));
+        assert_eq!(one["end"], json!("500-18446744073709551615"));
+        // The window end actually orders at-or-above any real id in end_ms, and the
+        // start at-or-below — verified against compare_stream_id.
+        let mid = "2000-42";
+        let lo = op_compare_stream_id(json!({"a": "1000-0", "b": mid})).unwrap();
+        let hi = op_compare_stream_id(json!({"a": "2000-18446744073709551615", "b": mid})).unwrap();
+        assert_eq!(
+            lo["cmp"],
+            json!(-1),
+            "range start is <= an id inside the window"
+        );
+        assert_eq!(
+            hi["cmp"],
+            json!(1),
+            "range end is >= an id inside the window"
+        );
+        // end_ms < start_ms and missing bounds reject.
+        assert!(op_stream_id_range(json!({"start_ms": 2000u64, "end_ms": 1000u64})).is_err());
+        assert!(op_stream_id_range(json!({"start_ms": 1000u64})).is_err());
+        assert!(op_stream_id_range(json!({})).is_err());
     }
 
     #[test]

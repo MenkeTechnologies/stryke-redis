@@ -1207,6 +1207,15 @@ fn Redis::build_stream_id (%opts) {
     Redis::_decode("build_stream_id", redis__build_stream_id(to_json(\%opts)))->{id}
 }
 
+## The inclusive stream-id pair for an XRANGE over a [$start_ms, $end_ms] time
+## window — the idiomatic "read a stream by time". start is "<start_ms>-0" and end
+## is "<end_ms>-<u64 max>", so every entry produced during end_ms is included. Both
+## bounds inclusive; $end_ms must be >= $start_ms. Returns a hashref
+## { start, end, start_ms, end_ms }.
+fn Redis::stream_id_range ($start_ms, $end_ms) {
+    Redis::_decode("stream_id_range", redis__stream_id_range(to_json({ start_ms => $start_ms, end_ms => $end_ms })))
+}
+
 ## Compare two Redis Streams entry IDs by their total order (ms, then seq).
 ## A bare "<ms>" takes seq 0; "-"/"+" sort below/above every concrete id;
 ## "$"/"*" have no absolute position and die. Returns -1 (a<b), 0, or 1 (a>b).

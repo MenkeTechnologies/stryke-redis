@@ -210,6 +210,16 @@ assert_eq Redis::build_stream_id(special => "auto"), "*", "build_stream_id: auto
 assert_eq Redis::build_stream_id(%{ Redis::parse_stream_id("1526919030474-55") }), "1526919030474-55", "build_stream_id: round-trips parse_stream_id"
 assert_dies fn { Redis::build_stream_id(special => "bogus") }, "build_stream_id: rejects an unknown special"
 
+# stream_id_range: inclusive XRANGE window over [start_ms, end_ms].
+val $sr = Redis::stream_id_range(1000, 2000)
+assert_eq $sr->{start}, "1000-0",                    "stream_id_range: start is the first id of start_ms"
+assert_eq $sr->{end},   "2000-18446744073709551615", "stream_id_range: end is the last id of end_ms (max seq)"
+assert_eq Redis::stream_id_range(500, 500)->{end}, "500-18446744073709551615", "stream_id_range: single-ms window spans the whole seq space"
+# the bounds bracket any real id inside the window (checked via compare_stream_id)
+assert_eq Redis::compare_stream_id($sr->{start}, "2000-42"), -1, "stream_id_range: start <= an id in the window"
+assert_eq Redis::compare_stream_id($sr->{end},   "2000-42"),  1, "stream_id_range: end >= an id in the window"
+assert_dies fn { Redis::stream_id_range(2000, 1000) }, "stream_id_range: rejects end_ms < start_ms"
+
 # compare_stream_id: total order over stream entry IDs (ms, then seq).
 assert_eq Redis::compare_stream_id("5-0", "10-0"), -1, "compare_stream_id: ms dominates"
 assert_eq Redis::compare_stream_id("10-9", "5-99"), 1, "compare_stream_id: larger ms wins despite seq"

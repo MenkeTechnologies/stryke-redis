@@ -377,6 +377,7 @@ Redis::cluster_keyslot($key)      → { key, slot, hash_tag }   # CLUSTER KEYSLO
 Redis::same_slot($a, $b)          → { a, b, slot_a, slot_b, same_slot }   # do two keys co-locate (avoid CROSSSLOT in multi-key ops)?
 Redis::parse_stream_id($id)       → { ms, seq, special }   # stream entry id <ms>-<seq>; special - + $ * → min/max/last/auto
 Redis::build_stream_id(%opts)     → $id   # { ms, seq? } or { special } → stream entry id; inverse of parse_stream_id
+Redis::stream_id_range($start_ms, $end_ms) → \%{ start, end, start_ms, end_ms }  # inclusive XRANGE window by time: "<start_ms>-0" .. "<end_ms>-<u64 max>" (every entry in end_ms included)
 Redis::compare_stream_id($a, $b)  → -1|0|1   # order two stream ids by (ms, seq); bare <ms> → seq 0; - + below/above; $ * die
 Redis::next_stream_id($id)        → $id   # successor of a concrete entry id (exclusive XRANGE bound); seq+1, rolls <ms>-MAX → <ms+1>-0
 Redis::prev_stream_id($id)        → $id   # predecessor (exclusive XREVRANGE bound); seq-1, borrows <ms>-0 → <ms-1>-MAX; mirror of next_stream_id
