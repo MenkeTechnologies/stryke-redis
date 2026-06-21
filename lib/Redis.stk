@@ -572,6 +572,20 @@ fn Redis::bitop ($operation, $destination, $keys, %opts) {
     Redis::_decode("bitop", redis__bitop(to_json($r)))->{value}
 }
 
+## Redis BITPOS — position of the first $bit (0 or 1) in $key, or -1.
+## opts: start, end (byte offsets; end requires start).
+fn Redis::bitpos ($key, $bit, %opts) {
+    val $r = Redis::_req({ key => $key, bit => $bit, start => $opts{start}, end => $opts{end} }, \%opts)
+    Redis::_decode("bitpos", redis__bitpos(to_json($r)))->{value}
+}
+
+## Redis LCS — longest common subsequence of the string values at $key1, $key2.
+## Returns the LCS string, or its length when `len => 1`.
+fn Redis::lcs ($key1, $key2, %opts) {
+    val $r = Redis::_req({ key1 => $key1, key2 => $key2, len => ($opts{len} ? \1 : \0) }, \%opts)
+    Redis::_decode("lcs", redis__lcs(to_json($r)))->{value}
+}
+
 # ── list extras ──────────────────────────────────────────────────────
 
 ## Redis LINDEX — element at $index (negatives count from tail), or undef.
@@ -653,6 +667,28 @@ fn Redis::hsetnx ($key, $field, $value, %opts) {
     Redis::_decode("hsetnx", redis__hsetnx(to_json($r)))->{value} ? 1 : 0
 }
 
+## Redis HSTRLEN — length of the string value of hash $field (0 if absent).
+fn Redis::hstrlen ($key, $field, %opts) {
+    val $r = Redis::_req({ key => $key, field => $field }, \%opts)
+    Redis::_decode("hstrlen", redis__hstrlen(to_json($r)))->{value}
+}
+
+## Redis HRANDFIELD — one random field, or N fields when `count => N`. With
+## `count` and `with_values => 1` returns [field, value] pairs.
+fn Redis::hrandfield ($key, %opts) {
+    val $r = Redis::_req(
+        { key => $key, count => $opts{count},
+          with_values => ($opts{with_values} ? \1 : \0) },
+        \%opts
+    )
+    val $o = Redis::_decode("hrandfield", redis__hrandfield(to_json($r)))
+    if (defined $opts{count}) {
+        $opts{with_values} ? @{ $o->{pairs} } : @{ $o->{fields} }
+    } else {
+        $o->{value}
+    }
+}
+
 # ── set extras ───────────────────────────────────────────────────────
 
 ## Redis SPOP — pop one random member, or N when `count => N`.
@@ -694,6 +730,27 @@ fn Redis::sdiff ($keys, %opts) {
     val $list = ref($keys) eq "ARRAY" ? $keys : [$keys]
     val $r = Redis::_req({ keys => $list }, \%opts)
     @{ Redis::_decode("sdiff", redis__sdiff(to_json($r)))->{members} }
+}
+
+## Redis SINTERSTORE — store the intersection of $keys at $destination; count.
+fn Redis::sinterstore ($destination, $keys, %opts) {
+    val $list = ref($keys) eq "ARRAY" ? $keys : [$keys]
+    val $r = Redis::_req({ destination => $destination, keys => $list }, \%opts)
+    Redis::_decode("sinterstore", redis__sinterstore(to_json($r)))->{value}
+}
+
+## Redis SUNIONSTORE — store the union of $keys at $destination; count.
+fn Redis::sunionstore ($destination, $keys, %opts) {
+    val $list = ref($keys) eq "ARRAY" ? $keys : [$keys]
+    val $r = Redis::_req({ destination => $destination, keys => $list }, \%opts)
+    Redis::_decode("sunionstore", redis__sunionstore(to_json($r)))->{value}
+}
+
+## Redis SDIFFSTORE — store ($keys[0] minus the rest) at $destination; count.
+fn Redis::sdiffstore ($destination, $keys, %opts) {
+    val $list = ref($keys) eq "ARRAY" ? $keys : [$keys]
+    val $r = Redis::_req({ destination => $destination, keys => $list }, \%opts)
+    Redis::_decode("sdiffstore", redis__sdiffstore(to_json($r)))->{value}
 }
 
 # ── sorted set extras ────────────────────────────────────────────────
@@ -761,6 +818,57 @@ fn Redis::zmscore ($key, $members, %opts) {
     @{ Redis::_decode("zmscore", redis__zmscore(to_json($r)))->{values} }
 }
 
+## Redis ZLEXCOUNT — count members in lexicographic range [min, max] (default
+## "-".."+"). Bounds accept "[a", "(b", "-", "+".
+fn Redis::zlexcount ($key, %opts) {
+    val $r = Redis::_req({ key => $key, min => $opts{min}, max => $opts{max} }, \%opts)
+    Redis::_decode("zlexcount", redis__zlexcount(to_json($r)))->{value}
+}
+
+## Redis ZRANGEBYLEX — members in lexicographic range [min, max] (default
+## "-".."+"); opts: rev, limit_offset, limit_count. Bounds: "[a", "(b", "-", "+".
+fn Redis::zrangebylex ($key, %opts) {
+    val $r = Redis::_req(
+        { key => $key, min => $opts{min}, max => $opts{max},
+          rev => ($opts{rev} ? \1 : \0),
+          limit_offset => $opts{limit_offset}, limit_count => $opts{limit_count} },
+        \%opts
+    )
+    @{ Redis::_decode("zrangebylex", redis__zrangebylex(to_json($r)))->{values} }
+}
+
+## Redis ZUNIONSTORE — store the union of $keys at $destination; cardinality.
+## opts: weights (aref, one per key), aggregate (SUM|MIN|MAX).
+fn Redis::zunionstore ($destination, $keys, %opts) {
+    val $list = ref($keys) eq "ARRAY" ? $keys : [$keys]
+    val $r = Redis::_req(
+        { destination => $destination, keys => $list,
+          weights => $opts{weights}, aggregate => $opts{aggregate} },
+        \%opts
+    )
+    Redis::_decode("zunionstore", redis__zunionstore(to_json($r)))->{value}
+}
+
+## Redis ZINTERSTORE — store the intersection of $keys at $destination;
+## cardinality. opts: weights (aref, one per key), aggregate (SUM|MIN|MAX).
+fn Redis::zinterstore ($destination, $keys, %opts) {
+    val $list = ref($keys) eq "ARRAY" ? $keys : [$keys]
+    val $r = Redis::_req(
+        { destination => $destination, keys => $list,
+          weights => $opts{weights}, aggregate => $opts{aggregate} },
+        \%opts
+    )
+    Redis::_decode("zinterstore", redis__zinterstore(to_json($r)))->{value}
+}
+
+## Redis ZDIFFSTORE — store ($keys[0] minus the rest) at $destination;
+## cardinality. (No weights/aggregate — ZDIFFSTORE does not accept them.)
+fn Redis::zdiffstore ($destination, $keys, %opts) {
+    val $list = ref($keys) eq "ARRAY" ? $keys : [$keys]
+    val $r = Redis::_req({ destination => $destination, keys => $list }, \%opts)
+    Redis::_decode("zdiffstore", redis__zdiffstore(to_json($r)))->{value}
+}
+
 # ── HyperLogLog ──────────────────────────────────────────────────────
 
 ## Redis PFADD — add elements to HLL at $key; 1 if cardinality changed.
@@ -820,6 +928,13 @@ fn Redis::xdel ($key, $ids, %opts) {
 fn Redis::xtrim ($key, %opts) {
     val $r = Redis::_req({ key => $key, maxlen => $opts{maxlen}, minid => $opts{minid} }, \%opts)
     Redis::_decode("xtrim", redis__xtrim(to_json($r)))->{value}
+}
+
+## Redis XSETID — set the stream's last-generated id to $id (e.g. after a
+## restore or a manual rewind). Returns 1.
+fn Redis::xsetid ($key, $id, %opts) {
+    val $r = Redis::_req({ key => $key, id => $id }, \%opts)
+    Redis::_decode("xsetid", redis__xsetid(to_json($r)))->{ok}
 }
 
 ## Redis XREAD — read from streams; $streams is a hashref { key => id }.

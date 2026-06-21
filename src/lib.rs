@@ -1351,6 +1351,51 @@ pub extern "C" fn redis__hsetnx(args: *const c_char) -> *const c_char {
     })
 }
 
+#[no_mangle]
+pub extern "C" fn redis__hstrlen(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let field = need_str(&v, "field")?;
+        with_conn(&v, |c| {
+            let n: i64 = redis::cmd("HSTRLEN").arg(key).arg(field).query(c)?;
+            Ok(json!({"value": n}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__hrandfield(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let count = v["count"].as_i64();
+        let with_values = v["with_values"].as_bool().unwrap_or(false);
+        with_conn(&v, |c| match count {
+            Some(n) if with_values => {
+                // Reply: flat [field, value, field, value, ...].
+                let flat: Vec<String> = redis::cmd("HRANDFIELD")
+                    .arg(key)
+                    .arg(n)
+                    .arg("WITHVALUES")
+                    .query(c)?;
+                let pairs: Vec<(String, String)> = flat
+                    .chunks(2)
+                    .filter(|ch| ch.len() == 2)
+                    .map(|ch| (ch[0].clone(), ch[1].clone()))
+                    .collect();
+                Ok(json!({"pairs": pairs}))
+            }
+            Some(n) => {
+                let fields: Vec<String> = redis::cmd("HRANDFIELD").arg(key).arg(n).query(c)?;
+                Ok(json!({"fields": fields}))
+            }
+            None => {
+                let field: Option<String> = redis::cmd("HRANDFIELD").arg(key).query(c)?;
+                Ok(json!({"value": field}))
+            }
+        })
+    })
+}
+
 // ── set extras ───────────────────────────────────────────────────────────────
 
 #[no_mangle]
@@ -1419,6 +1464,21 @@ pub extern "C" fn redis__sunion(args: *const c_char) -> *const c_char {
 #[no_mangle]
 pub extern "C" fn redis__sdiff(args: *const c_char) -> *const c_char {
     ffi_call(args, |v| set_combine(&v, "SDIFF"))
+}
+
+#[no_mangle]
+pub extern "C" fn redis__sinterstore(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| set_store(&v, "SINTERSTORE"))
+}
+
+#[no_mangle]
+pub extern "C" fn redis__sunionstore(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| set_store(&v, "SUNIONSTORE"))
+}
+
+#[no_mangle]
+pub extern "C" fn redis__sdiffstore(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| set_store(&v, "SDIFFSTORE"))
 }
 
 // ── sorted set extras ────────────────────────────────────────────────────────
@@ -1559,6 +1619,138 @@ pub extern "C" fn redis__zmscore(args: *const c_char) -> *const c_char {
         with_conn(&v, |c| {
             let scores: Vec<Option<f64>> = redis::cmd("ZMSCORE").arg(key).arg(&members).query(c)?;
             Ok(json!({"values": scores}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__zlexcount(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let min = arg_str(&v["min"]).unwrap_or_else(|| "-".to_string());
+        let max = arg_str(&v["max"]).unwrap_or_else(|| "+".to_string());
+        with_conn(&v, |c| {
+            let n: i64 = redis::cmd("ZLEXCOUNT")
+                .arg(key)
+                .arg(min)
+                .arg(max)
+                .query(c)?;
+            Ok(json!({"value": n}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__zrangebylex(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let min = arg_str(&v["min"]).unwrap_or_else(|| "-".to_string());
+        let max = arg_str(&v["max"]).unwrap_or_else(|| "+".to_string());
+        let rev = v["rev"].as_bool().unwrap_or(false);
+        let limit_offset = v["limit_offset"].as_i64();
+        let limit_count = v["limit_count"].as_i64();
+        with_conn(&v, |c| {
+            let mut cmd = redis::cmd(if rev { "ZREVRANGEBYLEX" } else { "ZRANGEBYLEX" });
+            // ZREVRANGEBYLEX takes (max, min) order.
+            if rev {
+                cmd.arg(key).arg(max).arg(min);
+            } else {
+                cmd.arg(key).arg(min).arg(max);
+            }
+            if let (Some(o), Some(n)) = (limit_offset, limit_count) {
+                cmd.arg("LIMIT").arg(o).arg(n);
+            }
+            let vals: Vec<String> = cmd.query(c)?;
+            Ok(json!({"values": vals}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__zunionstore(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| zstore(&v, "ZUNIONSTORE"))
+}
+
+#[no_mangle]
+pub extern "C" fn redis__zinterstore(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| zstore(&v, "ZINTERSTORE"))
+}
+
+#[no_mangle]
+pub extern "C" fn redis__zdiffstore(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        // ZDIFFSTORE has no WEIGHTS/AGGREGATE — dest numkeys key [key ...].
+        let dest = need_str(&v, "destination")?;
+        let keys = string_vec(&v["keys"])?;
+        if keys.is_empty() {
+            return Err(anyhow!("zdiffstore: keys must be non-empty"));
+        }
+        with_conn(&v, |c| {
+            let n: i64 = redis::cmd("ZDIFFSTORE")
+                .arg(dest)
+                .arg(keys.len())
+                .arg(&keys)
+                .query(c)?;
+            Ok(json!({"value": n}))
+        })
+    })
+}
+
+// ── string extras (2) ─────────────────────────────────────────────────────────
+
+#[no_mangle]
+pub extern "C" fn redis__bitpos(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let bit = need_i64(&v, "bit")?;
+        let start = v["start"].as_i64();
+        let end = v["end"].as_i64();
+        with_conn(&v, |c| {
+            let mut cmd = redis::cmd("BITPOS");
+            cmd.arg(key).arg(bit);
+            if let Some(s) = start {
+                cmd.arg(s);
+                if let Some(e) = end {
+                    cmd.arg(e);
+                }
+            }
+            let n: i64 = cmd.query(c)?;
+            Ok(json!({"value": n}))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__lcs(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key1 = need_str(&v, "key1")?;
+        let key2 = need_str(&v, "key2")?;
+        let len = v["len"].as_bool().unwrap_or(false);
+        with_conn(&v, |c| {
+            let mut cmd = redis::cmd("LCS");
+            cmd.arg(key1).arg(key2);
+            if len {
+                cmd.arg("LEN");
+                let n: i64 = cmd.query(c)?;
+                Ok(json!({"value": n}))
+            } else {
+                let s: String = cmd.query(c)?;
+                Ok(json!({"value": s}))
+            }
+        })
+    })
+}
+
+// ── stream extras ──────────────────────────────────────────────────────────────
+
+#[no_mangle]
+pub extern "C" fn redis__xsetid(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let id = need_str(&v, "id")?;
+        with_conn(&v, |c| {
+            let r: String = redis::cmd("XSETID").arg(key).arg(id).query(c)?;
+            Ok(json!({"ok": r == "OK"}))
         })
     })
 }
@@ -2437,6 +2629,61 @@ fn set_combine(v: &Value, op: &str) -> Result<Value> {
     with_conn(v, |c| {
         let members: Vec<String> = redis::cmd(op).arg(&keys).query(c)?;
         Ok(json!({ "members": members }))
+    })
+}
+
+/// SINTERSTORE / SUNIONSTORE / SDIFFSTORE share one shape: destination + source
+/// keys in, count of members in the destination out.
+fn set_store(v: &Value, op: &str) -> Result<Value> {
+    let dest = need_str(v, "destination")?;
+    let keys = string_vec(&v["keys"])?;
+    if keys.is_empty() {
+        return Err(anyhow!("{op}: keys must be non-empty"));
+    }
+    with_conn(v, |c| {
+        let n: i64 = redis::cmd(op).arg(dest).arg(&keys).query(c)?;
+        Ok(json!({ "value": n }))
+    })
+}
+
+/// ZUNIONSTORE / ZINTERSTORE share one shape: dest, numkeys, keys, optional
+/// per-key WEIGHTS and an AGGREGATE mode (SUM|MIN|MAX). Returns the cardinality
+/// of the resulting sorted set stored at `destination`.
+fn zstore(v: &Value, op: &str) -> Result<Value> {
+    let dest = need_str(v, "destination")?;
+    let keys = string_vec(&v["keys"])?;
+    if keys.is_empty() {
+        return Err(anyhow!("{op}: keys must be non-empty"));
+    }
+    let weights = v["weights"].as_array();
+    if let Some(w) = weights {
+        if w.len() != keys.len() {
+            return Err(anyhow!(
+                "{op}: weights length ({}) must equal keys length ({})",
+                w.len(),
+                keys.len()
+            ));
+        }
+    }
+    let aggregate = v["aggregate"].as_str();
+    with_conn(v, |c| {
+        let mut cmd = redis::cmd(op);
+        cmd.arg(dest).arg(keys.len()).arg(&keys);
+        if let Some(w) = weights {
+            cmd.arg("WEIGHTS");
+            for weight in w {
+                let f = weight
+                    .as_f64()
+                    .or_else(|| weight.as_str().and_then(|s| s.parse::<f64>().ok()))
+                    .ok_or_else(|| anyhow!("{op}: bad weight"))?;
+                cmd.arg(f);
+            }
+        }
+        if let Some(agg) = aggregate {
+            cmd.arg("AGGREGATE").arg(agg);
+        }
+        let n: i64 = cmd.query(c)?;
+        Ok(json!({ "value": n }))
     })
 }
 
@@ -3719,6 +3966,49 @@ mod tests {
     #[test]
     fn need_i64_rejects_non_integer_number() {
         assert!(need_i64(&json!({"seconds": 3.5}), "seconds").is_err());
+    }
+
+    // ── store-op argument validation (no connection) ─────────────────────────
+
+    /// ZUNIONSTORE / ZINTERSTORE reject a WEIGHTS array whose length does not
+    /// match the key count — sending a mismatched WEIGHTS to Redis is a hard
+    /// error, and catching it client-side names the exact lengths. This
+    /// validation runs before any connection is opened, so it is testable
+    /// without a live server. Pin the mismatch rejection, the empty-keys
+    /// rejection (numkeys 0 is also a Redis error), and the missing-dest path.
+    #[test]
+    fn zstore_rejects_weight_length_mismatch_and_empty_keys() {
+        let err = zstore(
+            &json!({"destination": "d", "keys": ["a", "b"], "weights": [1, 2, 3]}),
+            "ZUNIONSTORE",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("weights length (3)"), "got: {err}");
+        assert!(err.contains("keys length (2)"), "got: {err}");
+        let empty = zstore(&json!({"destination": "d", "keys": []}), "ZINTERSTORE")
+            .unwrap_err()
+            .to_string();
+        assert!(empty.contains("must be non-empty"), "got: {empty}");
+        let nodst = zstore(&json!({"keys": ["a"]}), "ZUNIONSTORE")
+            .unwrap_err()
+            .to_string();
+        assert!(nodst.contains("destination"), "got: {nodst}");
+    }
+
+    /// SINTERSTORE / SUNIONSTORE / SDIFFSTORE reject empty key sets before
+    /// connecting (Redis errors on a store with no source keys), and name a
+    /// missing destination. Connection-free, so it runs in CI without redis.
+    #[test]
+    fn set_store_rejects_empty_keys_and_missing_destination() {
+        let empty = set_store(&json!({"destination": "d", "keys": []}), "SINTERSTORE")
+            .unwrap_err()
+            .to_string();
+        assert!(empty.contains("must be non-empty"), "got: {empty}");
+        let nodst = set_store(&json!({"keys": ["a"]}), "SDIFFSTORE")
+            .unwrap_err()
+            .to_string();
+        assert!(nodst.contains("destination"), "got: {nodst}");
     }
 
     // ── pure helpers (no connection) ─────────────────────────────────────────

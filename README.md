@@ -254,6 +254,8 @@ Redis::incrbyfloat $key, $by, %opts → $new
 Redis::setbit     $key, $offset, $bit, %opts → $prior  # getbit → bit
 Redis::bitcount   $key, %opts → $n                # opts: start, end
 Redis::bitop      $op, $dst, $keys_or_aref, %opts → $len  # AND|OR|XOR|NOT
+Redis::bitpos     $key, $bit, %opts → $pos | -1   # opts: start, end (byte offsets)
+Redis::lcs        $key1, $key2, %opts → $lcs | $len     # opts: len (longest common subsequence)
 
 # List extras
 Redis::lindex     $key, $index, %opts → $value | undef
@@ -268,22 +270,29 @@ Redis::hexists    $key, $field, %opts → 1 | 0
 Redis::hincrby    $key, $field, $by, %opts → $new # opts: float
 Redis::hlen       $key, %opts → $count
 Redis::hsetnx     $key, $field, $value, %opts → 1 | 0
+Redis::hstrlen    $key, $field, %opts → $len           # length of the field's value
+Redis::hrandfield $key, %opts → $field | @fields | @pairs # opts: count, with_values
 
 # Set algebra
 Redis::spop       $key, %opts → $member | @members    # opts: count
 Redis::srandmember $key, %opts → $member | @members   # opts: count
 Redis::smove      $src, $dst, $member, %opts → 1 | 0
 Redis::sinter     $keys_or_aref, %opts → @members     # sunion, sdiff
+Redis::sinterstore $dst, $keys_or_aref, %opts → $card # sunionstore, sdiffstore
 
 # Sorted set extras
 Redis::zincrby    $key, $by, $member, %opts → $new
 Redis::zrank      $key, $member, %opts → $rank | undef # opts: rev
 Redis::zcount     $key, %opts → $n                     # opts: min, max
 Redis::zrangebyscore $key, %opts → @values | @pairs    # opts: min,max,with_scores,rev,limit_*
+Redis::zrangebylex $key, %opts → @values               # opts: min,max,rev,limit_*  (bounds: [a (b - +)
+Redis::zlexcount  $key, %opts → $n                     # opts: min, max (lexicographic)
 Redis::zpopmin    $key, %opts → @pairs                 # zpopmax; opts: count
 Redis::zremrangebyrank  $key, $start, $stop, %opts → $removed
 Redis::zremrangebyscore $key, %opts → $removed         # opts: min, max
 Redis::zmscore    $key, $members_or_aref, %opts → @scores
+Redis::zunionstore $dst, $keys_or_aref, %opts → $card  # opts: weights, aggregate; zinterstore
+Redis::zdiffstore $dst, $keys_or_aref, %opts → $card
 
 # HyperLogLog
 Redis::pfadd      $key, $elements_or_aref, %opts → 1 | 0
@@ -296,6 +305,7 @@ Redis::xlen       $key, %opts → $count
 Redis::xrange     $key, %opts → @entries               # opts: start,end,count,rev
 Redis::xdel       $key, $ids_or_aref, %opts → $removed
 Redis::xtrim      $key, %opts → $removed               # opts: maxlen | minid
+Redis::xsetid     $key, $id, %opts → 1                  # set the stream's last-generated id
 Redis::xread      \%streams, %opts → \%resp            # {key=>id}; opts: count, block
 
 # Geospatial
@@ -451,11 +461,13 @@ stryke-redis/
     kv.stk
     structures.stk
     publish.stk
+    pipeline.stk
+    discover.stk
   docs/
     index.html                     # docs site
     report.html
   .github/workflows/
-    ci.yml                         # redis:7 service + live round-trip
+    ci.yml                         # check + fmt + clippy + cargo test + doc
     release.yml                    # cross-compile + GH release on tag push
 ```
 

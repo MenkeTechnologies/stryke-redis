@@ -85,8 +85,51 @@ if ($alive) {
     val @keys = Redis::scan(match => "$pfx:*", count => 100, %conn)
     assert_ge scalar(@keys), 4, "scan finds ≥4 keys under our prefix"
 
+    # 13. hash extras: hstrlen / hrandfield
+    Redis::hmset("$pfx:h2", { name => "alice", role => "admin" }, %conn)
+    assert_eq Redis::hstrlen("$pfx:h2", "name", %conn), 5, "hstrlen(name) = 5"
+    assert_eq Redis::hstrlen("$pfx:h2", "absent", %conn), 0, "hstrlen(absent) = 0"
+    val $rf = Redis::hrandfield("$pfx:h2", %conn)
+    assert_ok($rf eq "name" || $rf eq "role", "hrandfield returns an existing field")
+
+    # 14. set store variants
+    Redis::sadd("$pfx:s1", ["a", "b", "c"], %conn)
+    Redis::sadd("$pfx:s2", ["b", "c", "d"], %conn)
+    assert_eq Redis::sinterstore("$pfx:si", ["$pfx:s1", "$pfx:s2"], %conn), 2, "sinterstore: |{b,c}| = 2"
+    assert_eq Redis::sunionstore("$pfx:su", ["$pfx:s1", "$pfx:s2"], %conn), 4, "sunionstore: |{a,b,c,d}| = 4"
+    assert_eq Redis::sdiffstore("$pfx:sd", ["$pfx:s1", "$pfx:s2"], %conn), 1, "sdiffstore: |{a}| = 1"
+
+    # 15. sorted set lex range + store
+    Redis::zadd("$pfx:zl", { a => 0, b => 0, c => 0, d => 0 }, %conn)
+    val @lex = Redis::zrangebylex("$pfx:zl", min => "[b", max => "[c", %conn)
+    assert_eq join(",", @lex), "b,c", "zrangebylex [b..[c] = b,c"
+    assert_eq Redis::zlexcount("$pfx:zl", min => "-", max => "+", %conn), 4, "zlexcount full range = 4"
+    Redis::zadd("$pfx:z1", { a => 1, b => 2 }, %conn)
+    Redis::zadd("$pfx:z2", { b => 3, c => 4 }, %conn)
+    assert_eq Redis::zunionstore("$pfx:zu", ["$pfx:z1", "$pfx:z2"], %conn), 3, "zunionstore card = 3"
+    assert_eq Redis::zinterstore("$pfx:zi", ["$pfx:z1", "$pfx:z2"], %conn), 1, "zinterstore card = 1 (b)"
+    assert_eq Redis::zscore("$pfx:zi", "b", %conn), 5, "zinterstore default SUM aggregate (2+3)"
+    assert_eq Redis::zdiffstore("$pfx:zd", ["$pfx:z1", "$pfx:z2"], %conn), 1, "zdiffstore card = 1 (a)"
+
+    # 16. bitpos
+    Redis::set("$pfx:bits", "\xff\xf0\x00", %conn)
+    assert_eq Redis::bitpos("$pfx:bits", 0, %conn), 12, "bitpos(0) = first clear bit at 12"
+
+    # 17. lcs
+    Redis::set("$pfx:l1", "ohmytext", %conn)
+    Redis::set("$pfx:l2", "mynewtext", %conn)
+    assert_eq Redis::lcs("$pfx:l1", "$pfx:l2", %conn), "mytext", "lcs = mytext"
+    assert_eq Redis::lcs("$pfx:l1", "$pfx:l2", len => 1, %conn), 6, "lcs len = 6"
+
+    # 18. xadd / xsetid
+    Redis::xadd("$pfx:strm", { f => "v" }, id => "5-5", %conn)
+    Redis::xsetid("$pfx:strm", "9-9", %conn)
+    val $xi = Redis::xinfo_stream("$pfx:strm", %conn)
+    assert_eq $xi->{"last-generated-id"}, "9-9", "xsetid sets last-generated-id"
+
     # cleanup
-    Redis::del(\@keys, %conn) if @keys
+    val @allkeys = Redis::scan(match => "$pfx:*", count => 1000, %conn)
+    Redis::del(\@allkeys, %conn) if @allkeys
 }
 
 # ── pure helpers (no connection — always run) ────────────────────────
