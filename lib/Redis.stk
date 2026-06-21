@@ -156,6 +156,24 @@ fn Redis::scan (%opts) {
     @{ Redis::_decode("scan", redis__scan(to_json($r)))->{keys} }
 }
 
+## Redis SORT — sort the list/set/zset at $key. opts: by (external-key
+## pattern), get (aref of patterns), alpha (lexical), desc, limit_offset +
+## limit_count, store (destination key). With `store` returns the count of
+## elements stored; otherwise returns the sorted elements (undef for missing
+## GET lookups).
+fn Redis::sort ($key, %opts) {
+    val $r = Redis::_req(
+        { key => $key, by => $opts{by},
+          get => (ref($opts{get}) eq "ARRAY" ? $opts{get} : (defined $opts{get} ? [$opts{get}] : [])),
+          alpha => ($opts{alpha} ? \1 : \0), desc => ($opts{desc} ? \1 : \0),
+          limit_offset => $opts{limit_offset}, limit_count => $opts{limit_count},
+          store => $opts{store} },
+        \%opts
+    )
+    val $o = Redis::_decode("sort", redis__sort(to_json($r)))
+    defined $opts{store} ? $o->{value} : @{ $o->{values} }
+}
+
 # ── lists ────────────────────────────────────────────────────────────
 
 ## Redis LPUSH — prepend values to list; returns new length.
@@ -655,6 +673,13 @@ fn Redis::hincrby ($key, $field, $by, %opts) {
     Redis::_decode("hincrby", redis__hincrby(to_json($r)))->{value}
 }
 
+## Redis HINCRBYFLOAT — increment hash $field by float $by; returns the new
+## value as a float. Accepts fractional increments that hincrby cannot.
+fn Redis::hincrbyfloat ($key, $field, $by, %opts) {
+    val $r = Redis::_req({ key => $key, field => $field, by => $by }, \%opts)
+    Redis::_decode("hincrbyfloat", redis__hincrbyfloat(to_json($r)))->{value}
+}
+
 ## Redis HLEN — number of fields in the hash.
 fn Redis::hlen ($key, %opts) {
     val $r = Redis::_req({ key => $key }, \%opts)
@@ -869,6 +894,62 @@ fn Redis::zdiffstore ($destination, $keys, %opts) {
     Redis::_decode("zdiffstore", redis__zdiffstore(to_json($r)))->{value}
 }
 
+## Redis ZDIFF — members in ($keys[0] minus the rest), without storing.
+## With `with_scores => 1` returns [member, score] pairs instead of members.
+fn Redis::zdiff ($keys, %opts) {
+    val $list = ref($keys) eq "ARRAY" ? $keys : [$keys]
+    val $r = Redis::_req(
+        { keys => $list, with_scores => ($opts{with_scores} ? \1 : \0) },
+        \%opts
+    )
+    val $o = Redis::_decode("zdiff", redis__zdiff(to_json($r)))
+    $opts{with_scores} ? @{ $o->{pairs} } : @{ $o->{members} }
+}
+
+## Redis ZUNION — members in the union of $keys, without storing. opts:
+## weights (aref, one per key), aggregate (SUM|MIN|MAX), with_scores. With
+## `with_scores => 1` returns [member, score] pairs instead of members.
+fn Redis::zunion ($keys, %opts) {
+    val $list = ref($keys) eq "ARRAY" ? $keys : [$keys]
+    val $r = Redis::_req(
+        { keys => $list, weights => $opts{weights}, aggregate => $opts{aggregate},
+          with_scores => ($opts{with_scores} ? \1 : \0) },
+        \%opts
+    )
+    val $o = Redis::_decode("zunion", redis__zunion(to_json($r)))
+    $opts{with_scores} ? @{ $o->{pairs} } : @{ $o->{members} }
+}
+
+## Redis ZINTER — members in the intersection of $keys, without storing. opts:
+## weights (aref, one per key), aggregate (SUM|MIN|MAX), with_scores. With
+## `with_scores => 1` returns [member, score] pairs instead of members.
+fn Redis::zinter ($keys, %opts) {
+    val $list = ref($keys) eq "ARRAY" ? $keys : [$keys]
+    val $r = Redis::_req(
+        { keys => $list, weights => $opts{weights}, aggregate => $opts{aggregate},
+          with_scores => ($opts{with_scores} ? \1 : \0) },
+        \%opts
+    )
+    val $o = Redis::_decode("zinter", redis__zinter(to_json($r)))
+    $opts{with_scores} ? @{ $o->{pairs} } : @{ $o->{members} }
+}
+
+## Redis ZRANDMEMBER — one random member, or N when `count => N`. With
+## `count` and `with_scores => 1` returns [member, score] pairs.
+fn Redis::zrandmember ($key, %opts) {
+    val $r = Redis::_req(
+        { key => $key, count => $opts{count},
+          with_scores => ($opts{with_scores} ? \1 : \0) },
+        \%opts
+    )
+    val $o = Redis::_decode("zrandmember", redis__zrandmember(to_json($r)))
+    if (defined $opts{count}) {
+        $opts{with_scores} ? @{ $o->{pairs} } : @{ $o->{members} }
+    } else {
+        $o->{value}
+    }
+}
+
 # ── HyperLogLog ──────────────────────────────────────────────────────
 
 ## Redis PFADD — add elements to HLL at $key; 1 if cardinality changed.
@@ -1025,6 +1106,12 @@ fn Redis::pubsub_numsub ($channels, %opts) {
     %{ Redis::_decode("pubsub_numsub", redis__pubsub_numsub(to_json($r)))->{counts} }
 }
 
+## Redis PUBSUB NUMPAT — number of unique pattern subscriptions (PSUBSCRIBE).
+fn Redis::pubsub_numpat (%opts) {
+    val $r = Redis::_req({}, \%opts)
+    Redis::_decode("pubsub_numpat", redis__pubsub_numpat(to_json($r)))->{value}
+}
+
 # ── server admin extras ──────────────────────────────────────────────
 
 ## Redis FLUSHALL — wipe every DB; opt `async => 1`.
@@ -1139,6 +1226,13 @@ fn Redis::object_idletime ($key, %opts) {
 fn Redis::object_refcount ($key, %opts) {
     val $r = Redis::_req({ key => $key }, \%opts)
     Redis::_decode("object_refcount", redis__object_refcount(to_json($r)))->{value}
+}
+
+## Redis OBJECT FREQ — logarithmic access frequency counter for $key, or undef.
+## Requires the server to run an LFU `maxmemory-policy` (allkeys-lfu/volatile-lfu).
+fn Redis::object_freq ($key, %opts) {
+    val $r = Redis::_req({ key => $key }, \%opts)
+    Redis::_decode("object_freq", redis__object_freq(to_json($r)))->{value}
 }
 
 # ── redis 6.2 / 7.x commands ─────────────────────────────────────────

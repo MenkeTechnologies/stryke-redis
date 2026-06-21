@@ -243,6 +243,7 @@ Redis::touch      $keys_or_aref, %opts → $count   # unlink → async del
 Redis::copy       $src, $dst, %opts → 1 | 0       # opts: replace, destination_db
 Redis::randomkey  %opts → $key | undef
 Redis::object_encoding $key, %opts → $encoding | undef
+Redis::sort       $key, %opts → @elements | $stored  # opts: by, get(aref), alpha, desc, limit_*, store
 
 # String extras + bitmaps
 Redis::getset     $key, $value, %opts → $old      # getdel → get+del
@@ -272,6 +273,7 @@ Redis::hlen       $key, %opts → $count
 Redis::hsetnx     $key, $field, $value, %opts → 1 | 0
 Redis::hstrlen    $key, $field, %opts → $len           # length of the field's value
 Redis::hrandfield $key, %opts → $field | @fields | @pairs # opts: count, with_values
+Redis::hincrbyfloat $key, $field, $by, %opts → $new    # fractional hash increment
 
 # Set algebra
 Redis::spop       $key, %opts → $member | @members    # opts: count
@@ -293,6 +295,9 @@ Redis::zremrangebyscore $key, %opts → $removed         # opts: min, max
 Redis::zmscore    $key, $members_or_aref, %opts → @scores
 Redis::zunionstore $dst, $keys_or_aref, %opts → $card  # opts: weights, aggregate; zinterstore
 Redis::zdiffstore $dst, $keys_or_aref, %opts → $card
+Redis::zunion     $keys_or_aref, %opts → @members | @pairs # opts: weights, aggregate, with_scores; zinter
+Redis::zdiff      $keys_or_aref, %opts → @members | @pairs # opts: with_scores
+Redis::zrandmember $key, %opts → $member | @members | @pairs # opts: count, with_scores
 
 # HyperLogLog
 Redis::pfadd      $key, $elements_or_aref, %opts → 1 | 0
@@ -324,6 +329,7 @@ Redis::script_exists $shas_or_aref, %opts → @bools
 Redis::publish    $channel, $message, %opts → $subscriber_count
 Redis::pubsub_channels %opts → @channels          # opts: pattern
 Redis::pubsub_numsub   $channels_or_aref, %opts → \%counts
+Redis::pubsub_numpat   %opts → $count             # unique pattern subscriptions
 Redis::info       %opts → $info                   # raw INFO string; opts: section (parse with Redis::parse_info)
 Redis::dbsize     %opts → $count
 Redis::flushdb    %opts → \%resp                  # require confirm => 1
@@ -360,6 +366,7 @@ Redis::acl_list        %opts → @rules
 Redis::acl_cat         %opts → @categories            # opts: category
 Redis::object_idletime $key, %opts → $seconds | undef
 Redis::object_refcount $key, %opts → $n | undef
+Redis::object_freq     $key, %opts → $freq | undef    # LFU access counter (requires lfu maxmemory-policy)
 
 # Redis 6.2 / 7.x
 Redis::getex      $key, %opts → $value | undef        # opts: ex, px, persist

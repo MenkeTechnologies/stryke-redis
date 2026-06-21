@@ -127,6 +127,41 @@ if ($alive) {
     val $xi = Redis::xinfo_stream("$pfx:strm", %conn)
     assert_eq $xi->{"last-generated-id"}, "9-9", "xsetid sets last-generated-id"
 
+    # 19. zunion / zinter / zdiff (non-store variants returning members)
+    Redis::zadd("$pfx:za", { a => 1, b => 2 }, %conn)
+    Redis::zadd("$pfx:zb", { b => 3, c => 4 }, %conn)
+    val @zu = sort(Redis::zunion(["$pfx:za", "$pfx:zb"], %conn))
+    assert_eq join(",", @zu), "a,b,c", "zunion members = a,b,c"
+    val @zin = Redis::zinter(["$pfx:za", "$pfx:zb"], %conn)
+    assert_eq join(",", @zin), "b", "zinter members = b"
+    val @zd = Redis::zdiff(["$pfx:za", "$pfx:zb"], %conn)
+    assert_eq join(",", @zd), "a", "zdiff members = a"
+    val @zup = Redis::zunion(["$pfx:za", "$pfx:zb"], with_scores => 1, %conn)
+    assert_near $zup[0]->{score} + $zup[1]->{score} + $zup[2]->{score}, 10.0, 1e-9, "zunion with_scores SUM aggregate = 1+5+4"
+
+    # 20. zrandmember
+    Redis::zadd("$pfx:zr", { a => 1, b => 2, c => 3 }, %conn)
+    val $zm = Redis::zrandmember("$pfx:zr", %conn)
+    assert_ok($zm eq "a" || $zm eq "b" || $zm eq "c", "zrandmember returns an existing member")
+    val @zmn = Redis::zrandmember("$pfx:zr", count => 3, %conn)
+    assert_eq scalar(@zmn), 3, "zrandmember count=3 returns 3 distinct members"
+
+    # 21. hincrbyfloat (fractional increment hincrby cannot do)
+    Redis::hset("$pfx:hf", "bal", "10.5", %conn)
+    assert_near Redis::hincrbyfloat("$pfx:hf", "bal", 0.25, %conn), 10.75, 1e-9, "hincrbyfloat 10.5 + 0.25 = 10.75"
+
+    # 22. sort (numeric default + alpha + limit)
+    Redis::rpush("$pfx:sortn", ["3", "1", "2"], %conn)
+    assert_eq join(",", Redis::sort("$pfx:sortn", %conn)), "1,2,3", "sort numeric ascending"
+    assert_eq join(",", Redis::sort("$pfx:sortn", desc => 1, %conn)), "3,2,1", "sort desc"
+    Redis::rpush("$pfx:sorta", ["banana", "apple", "cherry"], %conn)
+    assert_eq join(",", Redis::sort("$pfx:sorta", alpha => 1, %conn)), "apple,banana,cherry", "sort alpha"
+    assert_eq join(",", Redis::sort("$pfx:sortn", limit_offset => 0, limit_count => 2, %conn)), "1,2", "sort with limit"
+    assert_eq Redis::sort("$pfx:sortn", store => "$pfx:sorted", %conn), 3, "sort store returns count"
+
+    # 23. pubsub_numpat (no pattern subscribers expected here → ≥ 0)
+    assert_ge Redis::pubsub_numpat(%conn), 0, "pubsub_numpat returns count ≥ 0"
+
     # cleanup
     val @allkeys = Redis::scan(match => "$pfx:*", count => 1000, %conn)
     Redis::del(\@allkeys, %conn) if @allkeys

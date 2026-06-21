@@ -2601,7 +2601,203 @@ pub extern "C" fn redis__xinfo_stream(args: *const c_char) -> *const c_char {
     })
 }
 
+// ── surface extras ───────────────────────────────────────────────────────────
+
+#[no_mangle]
+pub extern "C" fn redis__zrandmember(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let count = v["count"].as_i64();
+        let with_scores = v["with_scores"].as_bool().unwrap_or(false);
+        with_conn(&v, |c| {
+            let mut cmd = redis::cmd("ZRANDMEMBER");
+            cmd.arg(key);
+            match count {
+                Some(n) => {
+                    cmd.arg(n);
+                    if with_scores {
+                        cmd.arg("WITHSCORES");
+                        let pairs: Vec<(String, f64)> = cmd.query(c)?;
+                        Ok(json!({ "pairs": pairs }))
+                    } else {
+                        let members: Vec<String> = cmd.query(c)?;
+                        Ok(json!({ "members": members }))
+                    }
+                }
+                None => {
+                    let member: Option<String> = cmd.query(c)?;
+                    Ok(json!({ "value": member }))
+                }
+            }
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__hincrbyfloat(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let field = need_str(&v, "field")?;
+        let by = v["by"]
+            .as_f64()
+            .or_else(|| v["by"].as_str().and_then(|s| s.parse::<f64>().ok()))
+            .ok_or_else(|| anyhow!("missing by"))?;
+        with_conn(&v, |c| {
+            let n: f64 = redis::cmd("HINCRBYFLOAT")
+                .arg(key)
+                .arg(field)
+                .arg(by)
+                .query(c)?;
+            Ok(json!({ "value": n }))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__object_freq(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        with_conn(&v, |c| {
+            let n: Option<i64> = redis::cmd("OBJECT").arg("FREQ").arg(key).query(c)?;
+            Ok(json!({ "value": n }))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__pubsub_numpat(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        with_conn(&v, |c| {
+            let n: i64 = redis::cmd("PUBSUB").arg("NUMPAT").query(c)?;
+            Ok(json!({ "value": n }))
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__sort(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let key = need_str(&v, "key")?;
+        let by = v["by"].as_str();
+        let get = string_vec(&v["get"]).unwrap_or_default();
+        let alpha = v["alpha"].as_bool().unwrap_or(false);
+        let desc = v["desc"].as_bool().unwrap_or(false);
+        let limit_offset = v["limit_offset"].as_i64();
+        let limit_count = v["limit_count"].as_i64();
+        let store = v["store"].as_str();
+        with_conn(&v, |c| {
+            let mut cmd = redis::cmd("SORT");
+            cmd.arg(key);
+            if let Some(pat) = by {
+                cmd.arg("BY").arg(pat);
+            }
+            if let (Some(o), Some(n)) = (limit_offset, limit_count) {
+                cmd.arg("LIMIT").arg(o).arg(n);
+            }
+            for pat in &get {
+                cmd.arg("GET").arg(pat);
+            }
+            if desc {
+                cmd.arg("DESC");
+            }
+            if alpha {
+                cmd.arg("ALPHA");
+            }
+            if let Some(dest) = store {
+                cmd.arg("STORE").arg(dest);
+                let n: i64 = cmd.query(c)?;
+                Ok(json!({ "value": n }))
+            } else {
+                let vals: Vec<Option<String>> = cmd.query(c)?;
+                Ok(json!({ "values": vals }))
+            }
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__zdiff(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        // ZDIFF numkeys key [key ...] [WITHSCORES] — no WEIGHTS/AGGREGATE.
+        let keys = string_vec(&v["keys"])?;
+        if keys.is_empty() {
+            return Err(anyhow!("zdiff: keys must be non-empty"));
+        }
+        let with_scores = v["with_scores"].as_bool().unwrap_or(false);
+        with_conn(&v, |c| {
+            let mut cmd = redis::cmd("ZDIFF");
+            cmd.arg(keys.len()).arg(&keys);
+            if with_scores {
+                cmd.arg("WITHSCORES");
+                let pairs: Vec<(String, f64)> = cmd.query(c)?;
+                Ok(json!({ "pairs": pairs }))
+            } else {
+                let members: Vec<String> = cmd.query(c)?;
+                Ok(json!({ "members": members }))
+            }
+        })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn redis__zunion(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| zcombine(&v, "ZUNION"))
+}
+
+#[no_mangle]
+pub extern "C" fn redis__zinter(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| zcombine(&v, "ZINTER"))
+}
+
 // ── helpers ─────────────────────────────────────────────────────────────────
+
+/// ZUNION / ZINTER share one shape: numkeys, keys, optional per-key WEIGHTS and
+/// an AGGREGATE mode (SUM|MIN|MAX), optional WITHSCORES. Unlike the *STORE
+/// variants these return the resulting members (or member/score pairs) rather
+/// than a count.
+fn zcombine(v: &Value, op: &str) -> Result<Value> {
+    let keys = string_vec(&v["keys"])?;
+    if keys.is_empty() {
+        return Err(anyhow!("{op}: keys must be non-empty"));
+    }
+    let weights = v["weights"].as_array();
+    if let Some(w) = weights {
+        if w.len() != keys.len() {
+            return Err(anyhow!(
+                "{op}: weights length ({}) must equal keys length ({})",
+                w.len(),
+                keys.len()
+            ));
+        }
+    }
+    let aggregate = v["aggregate"].as_str();
+    let with_scores = v["with_scores"].as_bool().unwrap_or(false);
+    with_conn(v, |c| {
+        let mut cmd = redis::cmd(op);
+        cmd.arg(keys.len()).arg(&keys);
+        if let Some(w) = weights {
+            cmd.arg("WEIGHTS");
+            for weight in w {
+                let f = weight
+                    .as_f64()
+                    .or_else(|| weight.as_str().and_then(|s| s.parse::<f64>().ok()))
+                    .ok_or_else(|| anyhow!("{op}: bad weight"))?;
+                cmd.arg(f);
+            }
+        }
+        if let Some(agg) = aggregate {
+            cmd.arg("AGGREGATE").arg(agg);
+        }
+        if with_scores {
+            cmd.arg("WITHSCORES");
+            let pairs: Vec<(String, f64)> = cmd.query(c)?;
+            Ok(json!({ "pairs": pairs }))
+        } else {
+            let members: Vec<String> = cmd.query(c)?;
+            Ok(json!({ "members": members }))
+        }
+    })
+}
 
 /// Fetch a required string field, erroring with the field name when absent.
 fn need_str<'a>(v: &'a Value, key: &str) -> Result<&'a str> {
@@ -3994,6 +4190,23 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(nodst.contains("destination"), "got: {nodst}");
+    }
+
+    /// ZUNION / ZINTER share `zcombine`, which validates the WEIGHTS length and
+    /// the non-empty key set before opening any connection — so the failure
+    /// modes are testable without a live server. Pin the weight-mismatch and
+    /// empty-keys rejections for both ops.
+    #[test]
+    fn zcombine_rejects_weight_length_mismatch_and_empty_keys() {
+        let err = zcombine(&json!({"keys": ["a", "b"], "weights": [1, 2, 3]}), "ZUNION")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("weights length (3)"), "got: {err}");
+        assert!(err.contains("keys length (2)"), "got: {err}");
+        let empty = zcombine(&json!({"keys": []}), "ZINTER")
+            .unwrap_err()
+            .to_string();
+        assert!(empty.contains("must be non-empty"), "got: {empty}");
     }
 
     /// SINTERSTORE / SUNIONSTORE / SDIFFSTORE reject empty key sets before
