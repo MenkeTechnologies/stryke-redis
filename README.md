@@ -99,12 +99,12 @@ Redis::set "session:42", "...", ex => 3600          # 1h
 p Redis::ttl "session:42"
 
 # Counters.
-my $n = Redis::incr "page-views", by => 5
+val $n = Redis::incr "page-views", by => 5
 
 # Lists / queues.
 Redis::lpush "events", ["a", "b", "c"]
-my @recent = Redis::lrange "events", 0, 9
-my $next   = Redis::rpop  "events"                  # FIFO consumption
+val @recent = Redis::lrange "events", 0, 9
+val $next   = Redis::rpop  "events"                  # FIFO consumption
 
 # Sets / dedup.
 Redis::sadd "seen-users", ["alice", "bob"]
@@ -112,19 +112,19 @@ p Redis::sismember "seen-users", "alice"            # 1
 
 # Hash = JSON-friendly objects.
 Redis::hmset "user:42", { name => "alice", role => "admin", score => 100 }
-my $u = Redis::hgetall "user:42"
+val $u = Redis::hgetall "user:42"
 p "$u->{name} ($u->{role})"
 
 # Sorted set = leaderboard.
 Redis::zadd "leaderboard", { alice => 100, bob => 200 }
-my @top = Redis::zrange "leaderboard", 0, 9, withscores => 1, rev => 1
+val @top = Redis::zrange "leaderboard", 0, 9, withscores => 1, rev => 1
 
 # Pub/sub publish (subscribe is streaming — coming in v2 once stryke has
 # a unix-socket reader builtin).
 Redis::publish "events", "new user signed up"
 
 # SCAN — non-blocking iteration.
-my @keys = Redis::scan match => "session:*", count => 100
+val @keys = Redis::scan match => "session:*", count => 100
 
 # Server.
 p to_json Redis::info section => "memory"
@@ -135,7 +135,7 @@ Redis::flushdb confirm => 1   # destructive — must pass confirm flag
 Connection overrides on every public fn (`%opts`):
 
 ```stryke
-my %prod = (
+val %prod = (
     url => "rediss://default:secret@prod.example.com:6379/0",
 )
 Redis::get "foo", %prod
@@ -174,7 +174,7 @@ export REDIS_URL=redis://localhost:6379/0
 ```stryke
 use Redis
 $ENV{REDIS_URL} = "redis://localhost:6379/0"
-my %conn = (url => $ENV{REDIS_URL})
+val %conn = (url => $ENV{REDIS_URL})
 Redis::set "k", "v", %conn
 ```
 
