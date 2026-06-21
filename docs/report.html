@@ -97,11 +97,17 @@
       <p class="tutorial-subtitle"><code>redis</code> Rust crate (sync) with rustls TLS. Single highest-leverage daily-use connector after Postgres / MySQL.</p>
 
       <div class="stat-grid">
+        <div class="stat-card"><div class="stat-val">184</div><div class="stat-label">Public Redis:: fns</div></div>
+        <div class="stat-card"><div class="stat-val cyan">166</div><div class="stat-label">Connection ops</div></div>
+        <div class="stat-card"><div class="stat-val green">18</div><div class="stat-label">Pure helpers</div></div>
+        <div class="stat-card"><div class="stat-val cyan">184</div><div class="stat-label">FFI exports (redis__*)</div></div>
+        <div class="stat-card"><div class="stat-val">0.19.0</div><div class="stat-label">Version</div></div>
         <div class="stat-card"><div class="stat-val">cdylib</div><div class="stat-label">Crate type</div></div>
         <div class="stat-card"><div class="stat-val cyan">opt-in</div><div class="stat-label">Tier</div></div>
         <div class="stat-card"><div class="stat-val cyan">dlopen</div><div class="stat-label">Load model</div></div>
         <div class="stat-card"><div class="stat-val">JSON-over-FFI</div><div class="stat-label">Envelope</div></div>
       </div>
+      <p>Surface counts are derived from source: <strong>184</strong> public <code>fn Redis::*</code> definitions in <code>lib/Redis.stk</code>, <strong>184</strong> <code>extern "C" fn redis__*</code> exports in <code>src/lib.rs</code> (one per public function, matched against the <code>[ffi]</code> table in <code>stryke.toml</code>), of which <strong>18</strong> are pure helpers that run with no connection, leaving <strong>166</strong> connection-backed Redis commands.</p>
 
       <hr class="section-rule">
       <h2 class="tutorial-title"><span class="step-hash">~</span>ARCHITECTURE</h2>
@@ -133,6 +139,46 @@
 # response shape
 {"value": ...} | {"values": [...]} | {"hash": {...}} | {"pairs": [[m, score], ...]}   # success
 {"error": "&lt;msg&gt;"}                                                                  # failure — wrapper die()s with the message</pre>
+
+      <hr class="section-rule">
+      <h2 class="tutorial-title"><span class="step-hash">%</span>SURFACE CENSUS</h2>
+      <p>The <strong>166</strong> connection-backed commands, broken down by Redis data type. Counts are computed from the <code>fn Redis::*</code> definitions in <code>lib/Redis.stk</code>.</p>
+      <table class="arch-table">
+        <thead><tr><th>Family</th><th>Count</th><th>Representative ops</th></tr></thead>
+        <tbody>
+          <tr><td>KV &amp; strings</td><td>24</td><td><code>get</code> <code>set</code> <code>incr</code> <code>mset</code> <code>scan</code> <code>getex</code> <code>setex</code> <code>append</code></td></tr>
+          <tr><td>Bitmaps</td><td>6</td><td><code>setbit</code> <code>getbit</code> <code>bitcount</code> <code>bitop</code> <code>bitpos</code> <code>lcs</code></td></tr>
+          <tr><td>Lists</td><td>15</td><td><code>lpush</code> <code>rpop</code> <code>lrange</code> <code>lmove</code> <code>lpos</code> <code>lmpop</code></td></tr>
+          <tr><td>Sets</td><td>16</td><td><code>sadd</code> <code>sismember</code> <code>sinter</code> <code>spop</code> <code>sintercard</code> <code>smismember</code></td></tr>
+          <tr><td>Hashes</td><td>15</td><td><code>hset</code> <code>hgetall</code> <code>hmset</code> <code>hincrbyfloat</code> <code>hrandfield</code></td></tr>
+          <tr><td>Sorted sets</td><td>24</td><td><code>zadd</code> <code>zrange</code> <code>zrangebyscore</code> <code>zpopmin</code> <code>zunion</code> <code>zmpop</code></td></tr>
+          <tr><td>Key management</td><td>13</td><td><code>rename</code> <code>persist</code> <code>pexpire</code> <code>copy</code> <code>unlink</code> <code>object_encoding</code></td></tr>
+          <tr><td>HyperLogLog</td><td>3</td><td><code>pfadd</code> <code>pfcount</code> <code>pfmerge</code></td></tr>
+          <tr><td>Streams</td><td>10</td><td><code>xadd</code> <code>xrange</code> <code>xread</code> <code>xgroup_create</code> <code>xack</code> <code>xinfo_stream</code></td></tr>
+          <tr><td>Geospatial</td><td>4</td><td><code>geoadd</code> <code>geopos</code> <code>geodist</code> <code>geosearch</code></td></tr>
+          <tr><td>Scripting</td><td>4</td><td><code>eval</code> <code>evalsha</code> <code>script_load</code> <code>script_exists</code></td></tr>
+          <tr><td>Cursor scans</td><td>3</td><td><code>hscan</code> <code>sscan</code> <code>zscan</code></td></tr>
+          <tr><td>Pub/sub</td><td>4</td><td><code>publish</code> <code>pubsub_channels</code> <code>pubsub_numsub</code> <code>pubsub_numpat</code></td></tr>
+          <tr><td>Pipeline / transaction</td><td>1</td><td><code>pipeline</code></td></tr>
+          <tr><td>Server, admin &amp; introspection</td><td>24</td><td><code>info</code> <code>config_get</code> <code>slowlog_get</code> <code>client_list</code> <code>acl_whoami</code> <code>object_freq</code></td></tr>
+        </tbody>
+      </table>
+      <p>Plus <strong>18</strong> pure helpers (no connection): INFO / CLIENT / CLUSTER reply parsers, URL parse/build/redact, Redis-glob match/escape/regex, cluster key-slot + co-location, and stream-id parse/build/compare/range/next/prev.</p>
+
+      <hr class="section-rule">
+      <h2 class="tutorial-title"><span class="step-hash">+</span>DEPENDENCIES</h2>
+      <p>The cdylib links a deliberately small set of foundational crates. None of these touch core stryke &mdash; they are linked only into <code>libstryke_redis</code>.</p>
+      <table class="arch-table">
+        <thead><tr><th>Crate</th><th>Version</th><th>Role</th></tr></thead>
+        <tbody>
+          <tr><td><code>redis</code></td><td>1.x</td><td>Sync Redis client; features <code>acl</code>, <code>streams</code>, <code>geospatial</code>, <code>script</code>, <code>num-bigint</code>, <code>tls-rustls</code> (<code>default-features = false</code>)</td></tr>
+          <tr><td><code>serde</code> / <code>serde_json</code></td><td>1.x</td><td>JSON-over-FFI encode/decode; <code>preserve_order</code> so hash field order survives</td></tr>
+          <tr><td><code>anyhow</code></td><td>1.x</td><td>Error propagation into the <code>{"error": …}</code> envelope</td></tr>
+          <tr><td><code>once_cell</code></td><td>1.x</td><td><code>OnceCell</code> for the process-lifetime connection cache</td></tr>
+          <tr><td><code>parking_lot</code></td><td>0.12.x</td><td><code>Mutex</code> guarding the connection map and each cached connection</td></tr>
+        </tbody>
+      </table>
+      <p>Release profile: <code>opt-level = 3</code>, <code>lto = "thin"</code>, <code>codegen-units = 1</code>, <code>strip = true</code>, <code>panic = "abort"</code>.</p>
 
       <hr class="section-rule">
       <h2 class="tutorial-title"><span class="step-hash">/</span>SCOPE</h2>
