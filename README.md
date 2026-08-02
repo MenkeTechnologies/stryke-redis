@@ -17,7 +17,8 @@
 > *"In-memory state, one pipe away."*
 
 Redis / Valkey client for stryke. KV, lists, sets, hashes, sorted sets,
-pub/sub publish, scan, server admin. Opt-in package tier.
+streams, geospatial, scripting, bitmaps, HyperLogLog, pub/sub publish,
+pipeline, scan, server admin. Opt-in package tier.
 
 ### [`strykelang`](https://github.com/MenkeTechnologies/strykelang) &middot; [`MenkeTechnologiesMeta`](https://github.com/MenkeTechnologies/MenkeTechnologiesMeta) · [`stryke-kafka`](https://github.com/MenkeTechnologies/stryke-kafka) · [`stryke-mongo`](https://github.com/MenkeTechnologies/stryke-mongo) · [`stryke-postgres`](https://github.com/MenkeTechnologies/stryke-postgres) · [`stryke-demo`](https://github.com/MenkeTechnologies/stryke-demo)
 
@@ -464,8 +465,8 @@ stryke-redis/
     Redis.stk                      # `use Redis` — thin wrapper around the FFI symbols
   t/
     test_redis.stk                 # live round-trip test suite
-  tests/
-    contract_cli_round4.rs         # Rust contract tests
+    test_stryke_redis_surface.stk  # wrapper-completeness pin
+  tests/                           # Rust contract test + repo lint gates
   examples/
     kv.stk
     structures.stk
@@ -482,13 +483,14 @@ stryke-redis/
 
 ## [0x09] Roadmap
 
-| v1 (this release) | v2+ |
+| Shipped | Not yet |
 |---|---|
 | All core data types + admin | Streaming `SUBSCRIBE` once stryke has Unix-socket builtin |
-| Connection pooling per call | Pipelined ops + transactions (MULTI/EXEC) |
-| Single-shot subprocess | Persistent serve-mode daemon |
-| String/binary values | RESP3 + RedisJSON / RedisSearch / RedisGraph |
-| `redis` 1.x sync API | Redis 8 Vector Sets + Bloom |
+| Streams, geo, Lua scripting, bitmaps, HyperLogLog | RESP3 + RedisJSON / RedisSearch / RedisGraph |
+| Pipelined ops + transactions (`Redis::pipeline`, `transaction => 1`) | Redis 8 Vector Sets + Bloom |
+| In-process cdylib — no subprocess per call | |
+| Connection cached per `(url, db, auth)` for the process lifetime | |
+| String/binary values, `redis` 1.x sync API | |
 
 ## [0xFF] License
 
